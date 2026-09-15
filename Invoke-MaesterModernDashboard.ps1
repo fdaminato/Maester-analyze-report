@@ -1,23 +1,23 @@
 <#
 .SYNOPSIS
-    Runs Maester and creates a brand-new standalone HTML security dashboard.
+    Runs ITI365 and creates a brand-new standalone HTML security dashboard.
 
 .DESCRIPTION
-    1. Imports the Maester module.
+    1. Imports the ITI365 module.
     2. Restarts in a clean PowerShell process.
     3. Force-disconnects cached Graph, Exchange, Compliance, Teams and Azure contexts
        in isolated child processes so authentication assemblies cannot conflict.
     4. Clears previous contexts, opens a new interactive browser sign-in, and validates
-       both the selected account and tenant before any Maester tests can run.
+       both the selected account and tenant before any ITI365 tests can run.
     5. Connects Graph first, then Exchange, Compliance, Teams and Azure using
        conflict-safe ordering and process-scoped contexts.
-    5. Runs Invoke-Maester against the specified test folder with -SkipGraphConnect.
-    6. Preserves Maester's original HTML, JSON and Markdown reports.
+    5. Runs Invoke-ITI365 against the specified test folder with -SkipGraphConnect.
+    6. Preserves ITI365's original HTML, JSON and Markdown reports.
     7. Removes the Markdown sections 'Remediation action' and 'Related links'
        from descriptions and test results.
     8. Builds a modern, searchable, sortable HTML dashboard with multi-select
-       checkbox filters from the structured results returned by the same Maester run.
-    9. Can rebuild the dashboard from an existing Maester-Raw.json without rerunning tests.
+       checkbox filters from the structured results returned by the same ITI365 run.
+    9. Can rebuild the dashboard from an existing ITI365-Raw.json without rerunning tests.
 
 .NOTES
     Recommended: PowerShell 7.x.
@@ -140,7 +140,6 @@ function Write-Step {
 
     Write-Host "`n==> $Message" -ForegroundColor Cyan
 }
-
 
 function Get-LatestAvailableModule {
     param(
@@ -302,8 +301,6 @@ try {
         Write-Output 'Disconnected and cleared cached context.'
     }
     else {
-        # Calling Disconnect-MgGraph is harmless and also clears a cached context
-        # if the module did not automatically surface it through Get-MgContext.
         Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
         Write-Output 'No active context found; cached sign-in cleanup attempted.'
     }
@@ -393,7 +390,6 @@ catch {
 }
 '@
 
-    # Remove any legacy remoting sessions in the clean dashboard process too.
     Get-PSSession -ErrorAction SilentlyContinue |
         Remove-PSSession -ErrorAction SilentlyContinue
 
@@ -424,23 +420,16 @@ function Connect-MaesterServicesSafely {
     )
 
     $connectionState = [ordered]@{
-        Graph             = $false
-        ExchangeOnline    = $false
+        Graph              = $false
+        ExchangeOnline     = $false
         SecurityCompliance = $false
-        Teams             = $false
-        Azure             = $false
+        Teams              = $false
+        Azure              = $false
     }
 
-    # Graph must be imported and connected before Az.Accounts or other modules
-    # can load a different Azure.Identity/MSAL assembly into this process.
     Import-LatestModule -Name 'Microsoft.Graph.Authentication' -Required | Out-Null
     Import-LatestModule -Name 'Maester' -Required | Out-Null
 
-    # The isolated cleanup clears the persisted Graph SDK context. Repeat the
-    # disconnect in the actual Maester process so no context loaded during module
-    # import can be reused. No device-code switch is used: Graph opens its normal
-    # interactive account-selection window and the selected tenant/account are
-    # validated before any test can run.
     Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
     Write-Host 'Microsoft Graph will use standard interactive authentication.' -ForegroundColor DarkGray
 
@@ -478,10 +467,6 @@ function Connect-MaesterServicesSafely {
                 ErrorAction  = 'Stop'
             }
 
-            # No device-code switch is supplied. Connect-MgGraph therefore uses
-            # delegated interactive authentication. TenantId constrains the target
-            # directory and ContextScope Process prevents persistence across sessions.
-
             try {
                 Connect-MgGraph @graphParameters
                 $graphContext = Get-MgContext -ErrorAction Stop
@@ -506,8 +491,6 @@ function Connect-MaesterServicesSafely {
                     throw "Microsoft Graph authenticated as '$($graphContext.Account)' instead of required account '$UPN'."
                 }
 
-                # Validate the actual organization returned by Graph, not only the
-                # local SDK context metadata.
                 $organizationResponse = Invoke-MgGraphRequest `
                     -Method GET `
                     -Uri 'https://graph.microsoft.com/v1.0/organization?$select=id,displayName' `
@@ -563,7 +546,6 @@ function Connect-MaesterServicesSafely {
 
             $exoCommand = Get-Command Connect-ExchangeOnline -ErrorAction Stop
             if ($exoCommand.Parameters.ContainsKey('DisableWAM')) {
-                # Force the normal interactive browser flow instead of reusing WAM.
                 $exoParameters.DisableWAM = $true
             }
 
@@ -591,7 +573,6 @@ function Connect-MaesterServicesSafely {
 
                 $ippsCommand = Get-Command Connect-IPPSSession -ErrorAction Stop
                 if ($ippsCommand.Parameters.ContainsKey('DisableWAM')) {
-                    # Force the normal interactive browser flow instead of reusing WAM.
                     $ippsParameters.DisableWAM = $true
                 }
 
@@ -613,12 +594,6 @@ function Connect-MaesterServicesSafely {
             }
 
             $teamsCommand = Get-Command Connect-MicrosoftTeams -ErrorAction Stop
-
-            # Do not pass -AccountId here. In Teams PowerShell 7.8.1, AccountId can
-            # trigger the Windows-account broker path even when the administrator
-            # needs to select a different account. TenantId keeps the sign-in scoped
-            # to the requested tenant, while the browser lets the operator choose the
-            # correct account interactively.
 
             if (-not $teamsCommand.Parameters.ContainsKey('DisableWAM')) {
                 throw "MicrosoftTeams $($teamsModule.Version) does not expose Connect-MicrosoftTeams -DisableWAM. Install MicrosoftTeams 7.8.1 or later."
@@ -664,7 +639,6 @@ function Connect-MaesterServicesSafely {
                 }
 
                 if ($azCommand.Parameters.ContainsKey('Force')) {
-                    # Do not silently reuse a cached Azure authentication result.
                     $azParameters.Force = $true
                 }
 
@@ -762,16 +736,6 @@ function ConvertTo-PlainText {
 }
 
 function Remove-MaesterExcludedMarkdownSections {
-    <#
-    .SYNOPSIS
-        Removes unwanted Markdown sections from Maester text before it is embedded
-        in the modern HTML report.
-
-    .DESCRIPTION
-        Removes a heading named "Remediation action" or "Related links" and all
-        content beneath it until the next Markdown heading at the same or a higher
-        level. Subheadings inside the removed section are removed as well.
-    #>
     param(
         [Parameter()]
         [AllowNull()]
@@ -782,8 +746,6 @@ function Remove-MaesterExcludedMarkdownSections {
         return ''
     }
 
-    # Some Maester values contain literal escaped new-line characters. Normalize
-    # those first so the same section-removal logic works for both representations.
     $normalized = $Text `
         -replace '\\r\\n', "`n" `
         -replace '\\n', "`n" `
@@ -798,7 +760,6 @@ function Remove-MaesterExcludedMarkdownSections {
         $heading = [regex]::Match($line, '^\s*(#{1,6})\s+(.+?)\s*$')
 
         if ($skipSection) {
-            # A heading at the same or a higher level ends the excluded section.
             if ($heading.Success -and $heading.Groups[1].Value.Length -le $skipHeadingLevel) {
                 $skipSection = $false
                 $skipHeadingLevel = 0
@@ -829,12 +790,7 @@ function Remove-MaesterExcludedMarkdownSections {
     return $cleaned.Trim()
 }
 
-
 function Get-MaesterRequirementText {
-    <#
-    .SYNOPSIS
-        Converts a Maester/Pester test title into a short readable requirement.
-    #>
     param(
         [Parameter()]
         [AllowNull()]
@@ -847,7 +803,6 @@ function Get-MaesterRequirementText {
 
     $requirement = $TestName.Trim()
 
-    # Remove control identifiers such as CIS.M365.1.1.1:, MT.1026:, CISA.MS.AAD.1.1:.
     $requirement = [regex]::Replace(
         $requirement,
         '^\s*[A-Z][A-Z0-9_-]{0,20}(?:\.[A-Z0-9_-]+)+\s*:\s*',
@@ -863,7 +818,6 @@ function Get-MaesterRequirementText {
         return 'The expected security configuration is present.'
     }
 
-    # Make normal prose sentence-case, but preserve acronyms such as MFA, CIS, AAD.
     if ($requirement.Length -gt 1 -and
         [char]::IsUpper($requirement[0]) -and
         -not [char]::IsUpper($requirement[1])) {
@@ -909,16 +863,6 @@ function ConvertTo-FriendlyAssertionValue {
 }
 
 function Get-MaesterErrorMessages {
-    <#
-    .SYNOPSIS
-        Extracts useful message strings from live ErrorRecord objects and from
-        ErrorRecord objects restored from Maester JSON.
-
-    .NOTES
-        This implementation is safe with Set-StrictMode -Version Latest. Maester
-        ErrorRecord objects do not always contain ErrorDetails, Exception, or a
-        message-bearing TargetObject.
-    #>
     param(
         [Parameter()]
         $Value
@@ -1010,12 +954,10 @@ function Get-MaesterErrorMessages {
             }
         }
         catch {
-            # One malformed ErrorRecord must never prevent the whole HTML report.
             try {
                 Add-MessageValue ([string]$item)
             }
             catch {
-                # Ignore this individual value and continue with the next one.
             }
         }
     }
@@ -1024,15 +966,6 @@ function Get-MaesterErrorMessages {
 }
 
 function ConvertTo-ReadableMaesterError {
-    <#
-    .SYNOPSIS
-        Converts raw Pester/Maester assertion output into readable Markdown.
-
-    .DESCRIPTION
-        Removes local script paths and source-line excerpts from the result pane.
-        Assertion failures are represented as Test outcome, Expected configuration,
-        and Observed result. Technical paths remain available in Technical metadata.
-    #>
     param(
         [Parameter()]
         $Value,
@@ -1066,8 +999,6 @@ function ConvertTo-ReadableMaesterError {
     $requirement = Get-MaesterRequirementText -TestName $TestName
     $normalizedStatus = if ([string]::IsNullOrWhiteSpace($Status)) { 'failed' } else { $Status.ToLowerInvariant() }
 
-    # Common Pester assertion, for example:
-    # Expected $true, because admin accounts are cloud-only, but got $false.
     $assertion = [regex]::Match(
         $raw,
         '(?is)Expected\s+(?<expected>.+?)(?:,\s*because\s+(?<because>.+?))?,\s*but\s+got\s+(?<actual>.+?)(?:\.(?:\s|$)|\r?\n|$)'
@@ -1106,8 +1037,6 @@ function ConvertTo-ReadableMaesterError {
         ) -join "`n")
     }
 
-    # Missing Entra ID P2 / Governance licensing is a frequent cause of Maester
-    # execution errors. Surface the actual prerequisite instead of the REST trace.
     if ($raw -match '(?i)AadPremiumLicenseRequired|tenant needs to have Microsoft Entra ID P2|Microsoft Entra ID Governance license') {
         return (@(
             '### Test outcome'
@@ -1121,7 +1050,6 @@ function ConvertTo-ReadableMaesterError {
         ) -join "`n")
     }
 
-    # Extract the useful Microsoft Graph/API error message from a JSON response.
     $jsonMessage = [regex]::Match($raw, '(?is)"message"\s*:\s*"(?<message>(?:\\.|[^"\\])+)"')
     if ($jsonMessage.Success) {
         $apiMessage = $jsonMessage.Groups['message'].Value
@@ -1144,7 +1072,6 @@ function ConvertTo-ReadableMaesterError {
         ) -join "`n")
     }
 
-    # Pester skipped result. Keep the reason but discard the embedded stack trace.
     $skipped = [regex]::Match($raw, '(?is)is\s+skipped,\s+because\s+(?<reason>.*?)(?:```|$)')
     if ($skipped.Success) {
         $reason = $skipped.Groups['reason'].Value.Trim()
@@ -1165,8 +1092,6 @@ function ConvertTo-ReadableMaesterError {
         }
     }
 
-    # Generic cleanup for any remaining error type. Local paths, source lines,
-    # carets, and Pester boilerplate are intentionally omitted from the UI.
     $cleanLines = [System.Collections.Generic.List[string]]::new()
     foreach ($rawLine in ($raw -split "`n")) {
         $line = $rawLine.Trim()
@@ -1248,12 +1173,12 @@ function ConvertTo-NormalizedStatus {
     $value = if ($null -eq $Status) { '' } else { $Status.Trim().ToLowerInvariant() }
 
     switch -Regex ($value) {
-        '^(pass|passed|success|succeeded)$'     { return 'Passed' }
-        '^(fail|failed|failure)$'              { return 'Failed' }
-        'investigat'                           { return 'Investigate' }
+        '^(pass|passed|success|succeeded)$'      { return 'Passed' }
+        '^(fail|failed|failure)$'               { return 'Failed' }
+        'investigat'                            { return 'Investigate' }
         '^(skip|skipped|ignored|inconclusive)$' { return 'Skipped' }
-        '^(notrun|not run|not_run|pending)$'   { return 'NotRun' }
-        '^(error|errored|broken)$'             { return 'Error' }
+        '^(notrun|not run|not_run|pending)$'    { return 'NotRun' }
+        '^(error|errored|broken)$'              { return 'Error' }
         default {
             if ([string]::IsNullOrWhiteSpace($Status)) {
                 return 'NotRun'
@@ -1272,13 +1197,13 @@ function ConvertTo-NormalizedSeverity {
     $value = if ($null -eq $Severity) { '' } else { $Severity.Trim().ToLowerInvariant() }
 
     switch ($value) {
-        'critical' { return 'Critical' }
-        'high'     { return 'High' }
-        'medium'   { return 'Medium' }
-        'low'      { return 'Low' }
-        'info'     { return 'Info' }
+        'critical'      { return 'Critical' }
+        'high'          { return 'High' }
+        'medium'        { return 'Medium' }
+        'low'           { return 'Low' }
+        'info'          { return 'Info' }
         'informational' { return 'Info' }
-        default    { return 'Not specified' }
+        default         { return 'Not specified' }
     }
 }
 
@@ -1403,148 +1328,143 @@ function New-NormalizedTestCollection {
         $index++
 
         try {
-        $name = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
-            'Name', 'TestName', 'TestTitle', 'ExpandedName', 'Title'
-        ) -DefaultValue "Test $index")
+            $name = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
+                'Name', 'TestName', 'TestTitle', 'ExpandedName', 'Title'
+            ) -DefaultValue "Test $index")
 
-        $rawStatus = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
-            'Result', 'Status', 'Outcome'
-        ) -DefaultValue 'NotRun')
+            $rawStatus = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
+                'Result', 'Status', 'Outcome'
+            ) -DefaultValue 'NotRun')
 
-        $investigateValue = Get-ObjectValue -InputObject $test -PropertyName @(
-            'Investigate', 'TestInvestigate', 'RequiresInvestigation'
-        ) -DefaultValue $false
+            $investigateValue = Get-ObjectValue -InputObject $test -PropertyName @(
+                'Investigate', 'TestInvestigate', 'RequiresInvestigation'
+            ) -DefaultValue $false
 
-        $investigate = $false
-        if ($investigateValue -is [bool]) {
-            $investigate = $investigateValue
-        }
-        elseif (-not [string]::IsNullOrWhiteSpace([string]$investigateValue)) {
-            $investigate = ([string]$investigateValue -match '^(true|1|yes)$')
-        }
+            $investigate = $false
+            if ($investigateValue -is [bool]) {
+                $investigate = $investigateValue
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace([string]$investigateValue)) {
+                $investigate = ([string]$investigateValue -match '^(true|1|yes)$')
+            }
 
-        $status = ConvertTo-NormalizedStatus -Status $rawStatus -Investigate:$investigate
+            $status = ConvertTo-NormalizedStatus -Status $rawStatus -Investigate:$investigate
 
-        # Maester stores the human-readable description and result under ResultDetail.
-        # Read those nested properties directly instead of serializing the entire
-        # ResultDetail object as one compact JSON string.
-        $resultDetail = Get-ObjectValue -InputObject $test -PropertyName @(
-            'ResultDetail', 'ResultDetails'
-        )
+            $resultDetail = Get-ObjectValue -InputObject $test -PropertyName @(
+                'ResultDetail', 'ResultDetails'
+            )
 
-        $severityValue = Get-ObjectValue -InputObject $test -PropertyName @(
-            'Severity', 'Risk', 'Level'
-        )
-        if ($null -eq $severityValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $severityValue))) {
-            $severityValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+            $severityValue = Get-ObjectValue -InputObject $test -PropertyName @(
                 'Severity', 'Risk', 'Level'
             )
-        }
-        $severity = ConvertTo-NormalizedSeverity -Severity (ConvertTo-PlainText $severityValue)
+            if ($null -eq $severityValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $severityValue))) {
+                $severityValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+                    'Severity', 'Risk', 'Level'
+                )
+            }
+            $severity = ConvertTo-NormalizedSeverity -Severity (ConvertTo-PlainText $severityValue)
 
-        $serviceValue = Get-ObjectValue -InputObject $test -PropertyName @(
-            'Service', 'Workload', 'Product'
-        )
-        if ($null -eq $serviceValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $serviceValue))) {
-            $serviceValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+            $serviceValue = Get-ObjectValue -InputObject $test -PropertyName @(
                 'Service', 'Workload', 'Product'
             )
-        }
-        $service = ConvertTo-PlainText $serviceValue
+            if ($null -eq $serviceValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $serviceValue))) {
+                $serviceValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+                    'Service', 'Workload', 'Product'
+                )
+            }
+            $service = ConvertTo-PlainText $serviceValue
 
-        $tags = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
-            'Tag', 'Tags'
-        ))
+            $tags = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
+                'Tag', 'Tags'
+            ))
 
-        $descriptionValue = Get-ObjectValue -InputObject $test -PropertyName @(
-            'TestDescription', 'Description', 'Overview'
-        )
-        if ($null -eq $descriptionValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $descriptionValue))) {
-            $descriptionValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+            $descriptionValue = Get-ObjectValue -InputObject $test -PropertyName @(
                 'TestDescription', 'Description', 'Overview'
             )
-        }
-        $description = Remove-MaesterExcludedMarkdownSections -Text (ConvertTo-PlainText $descriptionValue)
+            if ($null -eq $descriptionValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $descriptionValue))) {
+                $descriptionValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+                    'TestDescription', 'Description', 'Overview'
+                )
+            }
+            $description = Remove-MaesterExcludedMarkdownSections -Text (ConvertTo-PlainText $descriptionValue)
 
-        if ([string]::IsNullOrWhiteSpace($description)) {
-            $description = Get-MaesterFallbackDescription -TestName $name
-        }
+            if ([string]::IsNullOrWhiteSpace($description)) {
+                $description = Get-MaesterFallbackDescription -TestName $name
+            }
 
-        $detailsValue = Get-ObjectValue -InputObject $test -PropertyName @(
-            'TestResult', 'Details', 'Message', 'ResultMessage'
-        )
-        if ($null -eq $detailsValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $detailsValue))) {
-            $detailsValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+            $detailsValue = Get-ObjectValue -InputObject $test -PropertyName @(
                 'TestResult', 'Details', 'Message', 'ResultMessage'
             )
-        }
-        $details = Remove-MaesterExcludedMarkdownSections -Text (ConvertTo-PlainText $detailsValue)
+            if ($null -eq $detailsValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $detailsValue))) {
+                $detailsValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+                    'TestResult', 'Details', 'Message', 'ResultMessage'
+                )
+            }
+            $details = Remove-MaesterExcludedMarkdownSections -Text (ConvertTo-PlainText $detailsValue)
 
-        if (-not [string]::IsNullOrWhiteSpace($details) -and
-            $details -match '(?is)InvalidResult:|Expected\s+.+?but\s+got|^\s*Line\s*\|') {
-            $details = ConvertTo-ReadableMaesterError -Value $details -TestName $name -Status $status
-        }
+            if (-not [string]::IsNullOrWhiteSpace($details) -and
+                $details -match '(?is)InvalidResult:|Expected\s+.+?but\s+got|^\s*Line\s*\|') {
+                $details = ConvertTo-ReadableMaesterError -Value $details -TestName $name -Status $status
+            }
 
-        $skipReasonValue = Get-ObjectValue -InputObject $test -PropertyName @(
-            'SkippedReason', 'SkipReason', 'Because'
-        )
-        if ($null -eq $skipReasonValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $skipReasonValue))) {
-            $skipReasonValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+            $skipReasonValue = Get-ObjectValue -InputObject $test -PropertyName @(
                 'SkippedReason', 'SkipReason', 'Because'
             )
-        }
-        $skipReason = Remove-MaesterExcludedMarkdownSections -Text (ConvertTo-PlainText $skipReasonValue)
-
-        $errorValue = Get-ObjectValue -InputObject $test -PropertyName @(
-            'ErrorRecord', 'Error', 'Exception'
-        )
-        $errorText = ConvertTo-ReadableMaesterError -Value $errorValue -TestName $name -Status $status
-
-        if ([string]::IsNullOrWhiteSpace($details)) {
-            if (-not [string]::IsNullOrWhiteSpace($skipReason)) {
-                $details = $skipReason
+            if ($null -eq $skipReasonValue -or [string]::IsNullOrWhiteSpace((ConvertTo-PlainText $skipReasonValue))) {
+                $skipReasonValue = Get-ObjectValue -InputObject $resultDetail -PropertyName @(
+                    'SkippedReason', 'SkipReason', 'Because'
+                )
             }
-            elseif (-not [string]::IsNullOrWhiteSpace($errorText)) {
-                $details = $errorText
+            $skipReason = Remove-MaesterExcludedMarkdownSections -Text (ConvertTo-PlainText $skipReasonValue)
+
+            $errorValue = Get-ObjectValue -InputObject $test -PropertyName @(
+                'ErrorRecord', 'Error', 'Exception'
+            )
+            $errorText = ConvertTo-ReadableMaesterError -Value $errorValue -TestName $name -Status $status
+
+            if ([string]::IsNullOrWhiteSpace($details)) {
+                if (-not [string]::IsNullOrWhiteSpace($skipReason)) {
+                    $details = $skipReason
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace($errorText)) {
+                    $details = $errorText
+                }
             }
-        }
 
-        $duration = ConvertTo-DurationText (Get-ObjectValue -InputObject $test -PropertyName @(
-            'Duration', 'ExecutionTime', 'Elapsed', 'Time'
-        ))
+            $duration = ConvertTo-DurationText (Get-ObjectValue -InputObject $test -PropertyName @(
+                'Duration', 'ExecutionTime', 'Elapsed', 'Time'
+            ))
 
-        $path = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
-            'Path', 'File', 'Source', 'ScriptBlockFile'
-        ))
+            $path = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
+                'Path', 'File', 'Source', 'ScriptBlockFile'
+            ))
 
-        $helpUrl = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
-            'HelpUrl', 'DocumentationUrl', 'DocsUrl'
-        ))
+            $helpUrl = ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @(
+                'HelpUrl', 'DocumentationUrl', 'DocsUrl'
+            ))
 
-        $controlId = Get-ControlId -Name $name
-        $category = Get-CategoryName -Service $service -ControlId $controlId -Tags $tags
+            $controlId = Get-ControlId -Name $name
+            $category = Get-CategoryName -Service $service -ControlId $controlId -Tags $tags
 
-        $normalized.Add([pscustomobject][ordered]@{
-            Index       = $index
-            ControlId   = $controlId
-            Name        = $name
-            Status      = $status
-            Severity    = $severity
-            Service     = $(if ([string]::IsNullOrWhiteSpace($service)) { $category } else { $service })
-            Category    = $category
-            Duration    = $duration
-            Tags        = $tags
-            Description = $description
-            Details     = $details
-            SkipReason  = $skipReason
-            Error       = $errorText
-            Source      = $path
-            HelpUrl     = $helpUrl
-        })
+            $normalized.Add([pscustomobject][ordered]@{
+                Index       = $index
+                ControlId   = $controlId
+                Name        = $name
+                Status      = $status
+                Severity    = $severity
+                Service     = $(if ([string]::IsNullOrWhiteSpace($service)) { $category } else { $service })
+                Category    = $category
+                Duration    = $duration
+                Tags        = $tags
+                Description = $description
+                Details     = $details
+                SkipReason  = $skipReason
+                Error       = $errorText
+                Source      = $path
+                HelpUrl     = $helpUrl
+            })
         }
         catch {
-            # Preserve the test row even when one unusual Maester object cannot be
-            # fully normalized. One bad record must not cancel the entire report.
             $fallbackName = try {
                 ConvertTo-PlainText (Get-ObjectValue -InputObject $test -PropertyName @('Name','TestName','TestTitle','ExpandedName','Title') -DefaultValue "Test $index")
             }
@@ -1686,7 +1606,7 @@ function New-ModernDashboardHtml {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>Maester Security Assessment</title>
+<title>ITI365 - Security Assessment</title>
 <style>
 :root {
   --bg:#f4f7fb;
@@ -1714,6 +1634,7 @@ function New-ModernDashboardHtml {
   --shadow-hover:0 8px 22px rgb(30 60 120 / .13);
   --font:Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
 }
+
 [data-theme="dark"] {
   --bg:#0c1524;
   --surface:#14213a;
@@ -1737,278 +1658,1298 @@ function New-ModernDashboardHtml {
   --shadow:0 2px 6px rgb(0 0 0 / .30);
   --shadow-hover:0 8px 22px rgb(0 0 0 / .45);
 }
+
 * { box-sizing:border-box; }
 html { scroll-behavior:smooth; }
-body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:14px/1.45 var(--font); }
+
+body {
+  margin:0;
+  min-height:100vh;
+  background:var(--bg);
+  color:var(--text);
+  font:14px/1.45 var(--font);
+}
+
 button, input { font:inherit; }
-header { position:sticky; top:0; z-index:100; }
-.topbar { min-height:68px; display:flex; align-items:center; gap:18px; padding:12px 28px; background:var(--surface); border-top:3px solid var(--accent); border-bottom:1px solid var(--border); box-shadow:var(--shadow); }
-.brand-left { min-width:0; display:flex; align-items:center; gap:12px; }
-.logo-fallback { width:42px; height:42px; min-width:42px; overflow:hidden; padding:0 7px; border-radius:10px; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,var(--accent),var(--navy)); color:#fff; font-size:16px; line-height:1.05; text-align:center; font-weight:800; box-shadow:var(--shadow); }
-h1 { margin:0; font-size:16px; line-height:1.2; letter-spacing:-.01em; }
-.subtitle { margin-top:3px; color:var(--muted); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:720px; }
-.topbar-actions { margin-left:auto; display:flex; align-items:center; gap:10px; }
-.btn { border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px 12px; background:var(--surface); color:var(--text); cursor:pointer; font-size:12.5px; font-weight:600; white-space:nowrap; transition:.15s ease; text-decoration:none; display:inline-flex; align-items:center; gap:7px; }
-.btn:hover { background:var(--surface2); transform:translateY(-1px); }
-.btn-primary { background:var(--accent); color:#fff; border-color:transparent; }
-.btn-primary:hover { background:var(--navy); }
-.generated { min-width:164px; padding-left:12px; border-left:1px solid var(--border); color:var(--muted); font-size:11.5px; line-height:1.35; text-align:right; }
-.generated strong { color:var(--text); font-weight:700; }
-.layout { max-width:1800px; margin:0 auto; padding:26px 32px 38px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:26px; }
-.grid > .card { position:relative; min-height:132px; padding:16px 17px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; transition:.15s ease; }
-.grid > .card:hover { box-shadow:var(--shadow-hover); transform:translateY(-1px); }
-.grid > .card::before { content:""; position:absolute; top:0; left:0; right:0; height:3px; background:var(--accent); opacity:.8; }
+
+header {
+  position:sticky;
+  top:0;
+  z-index:100;
+}
+
+.topbar {
+  min-height:68px;
+  display:flex;
+  align-items:center;
+  gap:18px;
+  padding:12px 28px;
+  background:var(--surface);
+  border-top:3px solid var(--accent);
+  border-bottom:1px solid var(--border);
+  box-shadow:var(--shadow);
+}
+
+.brand-left {
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.logo-fallback {
+  width:42px;
+  height:42px;
+  min-width:42px;
+  overflow:hidden;
+  padding:0 7px;
+  border-radius:10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:linear-gradient(135deg,var(--accent),var(--navy));
+  color:#fff;
+  font-size:16px;
+  line-height:1.05;
+  text-align:center;
+  font-weight:800;
+  box-shadow:var(--shadow);
+}
+
+h1 {
+  margin:0;
+  font-size:16px;
+  line-height:1.2;
+  letter-spacing:-.01em;
+}
+
+.subtitle {
+  margin-top:3px;
+  color:var(--muted);
+  font-size:11.5px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  max-width:720px;
+}
+
+.topbar-actions {
+  margin-left:auto;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.btn {
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:8px 12px;
+  background:var(--surface);
+  color:var(--text);
+  cursor:pointer;
+  font-size:12.5px;
+  font-weight:600;
+  white-space:nowrap;
+  transition:.15s ease;
+  text-decoration:none;
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+}
+
+.btn:hover {
+  background:var(--surface2);
+  transform:translateY(-1px);
+}
+
+.btn-primary {
+  background:var(--accent);
+  color:#fff;
+  border-color:transparent;
+}
+
+.btn-primary:hover {
+  background:var(--navy);
+}
+
+.generated {
+  min-width:164px;
+  padding-left:12px;
+  border-left:1px solid var(--border);
+  color:var(--muted);
+  font-size:11.5px;
+  line-height:1.35;
+  text-align:right;
+}
+
+.generated strong {
+  color:var(--text);
+  font-weight:700;
+}
+
+.layout {
+  max-width:1800px;
+  margin:0 auto;
+  padding:26px 32px 38px;
+}
+
+.grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:14px;
+  margin-bottom:26px;
+}
+
+.grid > .card {
+  position:relative;
+  min-height:132px;
+  padding:16px 17px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  overflow:hidden;
+  transition:.15s ease;
+}
+
+.grid > .card:hover {
+  box-shadow:var(--shadow-hover);
+  transform:translateY(-1px);
+}
+
+.grid > .card::before {
+  content:"";
+  position:absolute;
+  top:0;
+  left:0;
+  right:0;
+  height:3px;
+  background:var(--accent);
+  opacity:.8;
+}
+
 .grid > .card.card-good::before { background:var(--green); }
 .grid > .card.card-bad::before { background:var(--red); }
 .grid > .card.card-warn::before { background:var(--amber); }
 .grid > .card.card-investigate::before { background:var(--purple); }
-.card-title { color:var(--muted); font-size:10.5px; font-weight:700; line-height:1.35; text-transform:uppercase; letter-spacing:.055em; }
-.card-value { margin-top:9px; color:var(--text); font-size:27px; font-weight:800; line-height:1; letter-spacing:-.025em; }
-.card-note { margin-top:7px; color:var(--muted); font-size:11.5px; line-height:1.4; }
+
+.card-title {
+  color:var(--muted);
+  font-size:10.5px;
+  font-weight:700;
+  line-height:1.35;
+  text-transform:uppercase;
+  letter-spacing:.055em;
+}
+
+.card-value {
+  margin-top:9px;
+  color:var(--text);
+  font-size:27px;
+  font-weight:800;
+  line-height:1;
+  letter-spacing:-.025em;
+}
+
+.card-note {
+  margin-top:7px;
+  color:var(--muted);
+  font-size:11.5px;
+  line-height:1.4;
+}
+
 .good { color:var(--green) !important; }
 .bad { color:var(--red) !important; }
 .warn { color:var(--amber) !important; }
 .info { color:var(--accent) !important; }
 .investigate { color:var(--purple) !important; }
+
 .section { margin-top:26px; }
-.section h2 { display:flex; align-items:center; gap:8px; margin:0 0 13px; color:var(--muted); font-size:12.5px; font-weight:800; text-transform:uppercase; letter-spacing:.065em; }
-.section h2::before { content:""; width:4px; height:17px; border-radius:999px; background:var(--accent); }
-.mini-grid { display:grid; grid-template-columns:repeat(3,minmax(260px,1fr)); gap:14px; }
-.section .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
-.chart-card { min-height:220px; display:grid; grid-template-columns:138px minmax(0,1fr); align-items:center; gap:17px; padding:16px; }
-.pie { position:relative; width:132px; height:132px; border-radius:50%; box-shadow:inset 0 0 0 1px var(--border); }
-.pie::after { content:""; position:absolute; inset:26px; background:var(--surface); border:1px solid var(--border); border-radius:50%; }
-.pie-center { position:absolute; inset:0; z-index:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text); font-size:18px; font-weight:800; }
-.pie-center small { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
-.legend { display:grid; gap:8px; color:var(--text); font-size:12px; min-width:0; }
-.legend-row { display:grid; grid-template-columns:11px minmax(0,1fr) auto; gap:8px; align-items:center; }
-.legend-row span:nth-child(2) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.legend-row strong { color:var(--text); font-size:11.5px; }
-.dot { width:10px; height:10px; border-radius:999px; }
+
+.section h2 {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:0 0 13px;
+  color:var(--muted);
+  font-size:12.5px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.065em;
+}
+
+.section h2::before {
+  content:"";
+  width:4px;
+  height:17px;
+  border-radius:999px;
+  background:var(--accent);
+}
+
+.mini-grid {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(260px,1fr));
+  gap:14px;
+}
+
+.section .card {
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+}
+
+.chart-card {
+  min-height:220px;
+  display:grid;
+  grid-template-columns:138px minmax(0,1fr);
+  align-items:center;
+  gap:17px;
+  padding:16px;
+}
+
+.pie {
+  position:relative;
+  width:132px;
+  height:132px;
+  border-radius:50%;
+  box-shadow:inset 0 0 0 1px var(--border);
+}
+
+.pie::after {
+  content:"";
+  position:absolute;
+  inset:26px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:50%;
+}
+
+.pie-center {
+  position:absolute;
+  inset:0;
+  z-index:1;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  color:var(--text);
+  font-size:18px;
+  font-weight:800;
+}
+
+.pie-center small {
+  font-size:9px;
+  color:var(--muted);
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+
+.legend {
+  display:grid;
+  gap:8px;
+  color:var(--text);
+  font-size:12px;
+  min-width:0;
+}
+
+.legend-row {
+  display:grid;
+  grid-template-columns:11px minmax(0,1fr) auto;
+  gap:8px;
+  align-items:center;
+}
+
+.legend-row span:nth-child(2) {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.legend-row strong {
+  color:var(--text);
+  font-size:11.5px;
+}
+
+.dot {
+  width:10px;
+  height:10px;
+  border-radius:999px;
+}
+
 .dot.green { background:var(--green); }
 .dot.red { background:var(--red); }
 .dot.blue { background:var(--accent); }
 .dot.orange { background:var(--amber); }
 .dot.purple { background:var(--purple); }
 .dot.gray { background:var(--gray); }
-.chart-list-card { min-height:220px; padding:16px; }
-.chart-list-title { margin:0 0 14px; color:var(--text); font-size:13px; font-weight:800; }
-.bar-list { display:grid; gap:10px; }
-.bar-row { display:grid; grid-template-columns:minmax(95px,130px) minmax(80px,1fr) 36px; align-items:center; gap:10px; font-size:11.5px; }
-.bar-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
-.bar-track { height:8px; border-radius:999px; background:var(--surface3); overflow:hidden; }
-.bar-fill { height:100%; min-width:2px; border-radius:999px; background:linear-gradient(90deg,var(--accent),var(--navy)); }
-.bar-count { text-align:right; font-weight:800; }
-.toolbar { display:flex; gap:9px; flex-wrap:wrap; align-items:flex-start; padding:14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); margin-bottom:13px; }
-input[type="search"] { min-height:38px; min-width:340px; flex:1 1 340px; padding:8px 10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-size:12.5px; }
-input[type="search"]::placeholder { color:var(--muted); }
-.filter-menu { position:relative; }
-.filter-trigger { min-height:38px; min-width:168px; display:flex; align-items:center; justify-content:space-between; gap:9px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text); cursor:pointer; font-size:12.5px; font-weight:650; transition:.15s ease; }
-.filter-trigger:hover, .filter-trigger[aria-expanded="true"] { background:var(--surface2); }
-.filter-label { white-space:nowrap; }
-.filter-summary { max-width:126px; overflow:hidden; color:var(--muted); font-size:10.5px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
-.filter-chevron { color:var(--muted); font-size:10px; transition:transform .15s ease; }
-.filter-trigger[aria-expanded="true"] .filter-chevron { transform:rotate(180deg); }
-.filter-popover { position:absolute; top:calc(100% + 7px); right:0; z-index:40; width:310px; max-height:410px; display:none; overflow:hidden; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-hover); }
-.filter-popover.open { display:block; }
-.filter-popover-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 12px; background:var(--surface2); border-bottom:1px solid var(--border); }
-.filter-popover-head strong { font-size:10.5px; text-transform:uppercase; letter-spacing:.055em; }
-.filter-link { padding:0; border:0; background:transparent; color:var(--accent); cursor:pointer; font-size:10.5px; font-weight:800; }
-.filter-options { max-height:340px; overflow:auto; padding:7px; }
-.check-option { display:grid; grid-template-columns:18px minmax(0,1fr) auto; gap:9px; align-items:center; min-height:36px; padding:7px 8px; border-radius:8px; cursor:pointer; }
-.check-option:hover { background:var(--surface2); }
-.check-option input { width:16px; height:16px; margin:0; accent-color:var(--accent); cursor:pointer; }
-.check-label { min-width:0; overflow:hidden; color:var(--text); font-size:11.5px; text-overflow:ellipsis; white-space:nowrap; }
-.check-count { min-width:28px; padding:2px 6px; border-radius:999px; background:var(--surface3); color:var(--muted); font-size:9.5px; font-weight:800; text-align:center; }
-.active-filter-count { min-width:19px; height:19px; max-width:none; display:inline-grid; place-items:center; padding:0 6px; border-radius:999px; background:var(--accent); color:#fff; font-size:9.5px; font-weight:900; }
-.result-count { margin-left:auto; min-height:38px; display:flex; align-items:center; padding:0 6px; color:var(--muted); font-size:11.5px; }
-.table-wrap { overflow:auto; max-height:760px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
-table { width:100%; border-collapse:collapse; font-size:12.5px; white-space:nowrap; }
-th { position:sticky; top:0; z-index:2; padding:11px 12px; background:var(--surface2); border-bottom:1px solid var(--border); color:var(--muted); text-align:left; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.045em; cursor:pointer; user-select:none; }
-th[data-sort]::after { content:" ↕"; opacity:.45; }
-td { padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
-tbody tr.data-row:hover td { background:var(--surface2); }
-tbody tr:last-child td { border-bottom:0; }
-.name-cell { white-space:normal; min-width:340px; max-width:720px; }
-.test-name { font-weight:700; color:var(--text); }
-.test-id { margin-top:3px; color:var(--muted); font-size:10.5px; }
-.pill { display:inline-flex; align-items:center; padding:3px 8px; border:1px solid var(--border); border-radius:999px; background:var(--surface3); color:var(--muted); font-size:10.5px; font-weight:700; }
-.pill.good { background:var(--green-soft); border-color:transparent; color:var(--green) !important; }
-.pill.bad { background:var(--red-soft); border-color:transparent; color:var(--red) !important; }
-.pill.warn { background:var(--amber-soft); border-color:transparent; color:var(--amber) !important; }
-.pill.investigate { background:var(--purple-soft); border-color:transparent; color:var(--purple) !important; }
-.pill.neutral { background:var(--gray-soft); border-color:transparent; color:var(--gray) !important; }
-.pill.critical { background:var(--red-soft); border-color:transparent; color:var(--red) !important; }
-.pill.high { background:var(--amber-soft); border-color:transparent; color:var(--amber) !important; }
-.pill.medium { background:var(--purple-soft); border-color:transparent; color:var(--purple) !important; }
-.pill.low { background:var(--green-soft); border-color:transparent; color:var(--green) !important; }
-.detail-row { display:none; }
-.detail-row.open { display:table-row; }
-.detail-row td { padding:0; background:var(--surface2); white-space:normal; }
-.detail-panel { padding:18px 20px 20px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; border-bottom:1px solid var(--border); }
-.detail-block { min-width:0; }
-.detail-block.full { grid-column:1 / -1; }
-.detail-heading { margin-bottom:7px; color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.055em; }
-.detail-text { margin:0; padding:14px; min-height:58px; max-height:460px; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text); font:12px/1.6 var(--font); overflow-wrap:anywhere; }
-.detail-text p { margin:0 0 10px; }
-.detail-text p:last-child { margin-bottom:0; }
-.detail-text ul, .detail-text ol { margin:8px 0 10px; padding-left:22px; }
-.detail-text li { margin:6px 0; padding-left:2px; }
-.detail-text a { color:var(--accent); font-weight:650; text-decoration:none; overflow-wrap:anywhere; }
-.detail-text a:hover { text-decoration:underline; }
-.detail-text .detail-title { margin:12px 0 7px; color:var(--text); font-size:12px; font-weight:800; }
-.detail-text .detail-title:first-child { margin-top:0; }
-.detail-text .result-callout { display:flex; align-items:flex-start; gap:9px; margin:0 0 12px; padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--surface2); }
-.detail-text .result-callout.good { background:var(--green-soft); border-color:transparent; color:var(--green) !important; }
-.detail-text .result-callout.bad { background:var(--red-soft); border-color:transparent; color:var(--red) !important; }
-.detail-text .result-callout.warn { background:var(--amber-soft); border-color:transparent; color:var(--amber) !important; }
-.detail-text .result-icon { flex:0 0 auto; font-weight:900; }
-.detail-object { display:grid; gap:10px; }
-.detail-object-row { padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface2); }
-.detail-object-key { margin-bottom:5px; color:var(--muted); font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.055em; }
-.metadata-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:9px; }
-.metadata-item { min-width:0; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface2); }
-.metadata-label { display:block; margin-bottom:3px; color:var(--muted); font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.055em; }
-.metadata-value { color:var(--text); font-size:11.5px; overflow-wrap:anywhere; }
-.metadata-value a { color:var(--accent); font-weight:700; text-decoration:none; }
-.metadata-value a:hover { text-decoration:underline; }
-.empty-state { display:none; padding:46px 20px; color:var(--muted); text-align:center; }
-footer { max-width:1800px; margin:0 auto; padding:0 32px 32px; color:var(--muted); font-size:11.5px; }
-@media (max-width:1180px) { .mini-grid { grid-template-columns:1fr; } }
-@media (max-width:820px) {
-  .topbar { align-items:flex-start; padding:12px 16px; flex-wrap:wrap; }
-  .topbar-actions { width:100%; margin-left:54px; flex-wrap:wrap; }
-  .generated { margin-left:auto; }
-  .layout { padding:20px 16px 30px; }
-  .detail-panel { grid-template-columns:1fr; }
-  .detail-block.full { grid-column:auto; }
-  input[type="search"] { min-width:100%; }
-  .filter-menu { flex:1 1 calc(50% - 6px); }
-  .filter-trigger { width:100%; min-width:0; }
-  .filter-popover { left:0; right:auto; width:min(330px,calc(100vw - 32px)); }
+
+.chart-list-card {
+  min-height:220px;
+  padding:16px;
 }
+
+.chart-list-title {
+  margin:0 0 14px;
+  color:var(--text);
+  font-size:13px;
+  font-weight:800;
+}
+
+.bar-list {
+  display:grid;
+  gap:10px;
+}
+
+.bar-row {
+  display:grid;
+  grid-template-columns:minmax(95px,130px) minmax(80px,1fr) 36px;
+  align-items:center;
+  gap:10px;
+  font-size:11.5px;
+}
+
+.bar-label {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--muted);
+}
+
+.bar-track {
+  height:8px;
+  border-radius:999px;
+  background:var(--surface3);
+  overflow:hidden;
+}
+
+.bar-fill {
+  height:100%;
+  min-width:2px;
+  border-radius:999px;
+  background:linear-gradient(90deg,var(--accent),var(--navy));
+}
+
+.bar-count {
+  text-align:right;
+  font-weight:800;
+}
+
+.toolbar {
+  display:flex;
+  gap:9px;
+  flex-wrap:wrap;
+  align-items:flex-start;
+  padding:14px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  margin-bottom:13px;
+}
+
+input[type="search"] {
+  min-height:38px;
+  min-width:340px;
+  flex:1 1 340px;
+  padding:8px 10px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  color:var(--text);
+  font-size:12.5px;
+}
+
+input[type="search"]::placeholder {
+  color:var(--muted);
+}
+
+.filter-menu {
+  position:relative;
+}
+
+.filter-trigger {
+  min-height:38px;
+  min-width:168px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:9px;
+  padding:8px 10px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface);
+  color:var(--text);
+  cursor:pointer;
+  font-size:12.5px;
+  font-weight:650;
+  transition:.15s ease;
+}
+
+.filter-trigger:hover,
+.filter-trigger[aria-expanded="true"] {
+  background:var(--surface2);
+}
+
+.filter-label {
+  white-space:nowrap;
+}
+
+.filter-summary {
+  max-width:126px;
+  overflow:hidden;
+  color:var(--muted);
+  font-size:10.5px;
+  font-weight:700;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.filter-chevron {
+  color:var(--muted);
+  font-size:10px;
+  transition:transform .15s ease;
+}
+
+.filter-trigger[aria-expanded="true"] .filter-chevron {
+  transform:rotate(180deg);
+}
+
+.filter-popover {
+  position:absolute;
+  top:calc(100% + 7px);
+  right:0;
+  z-index:40;
+  width:310px;
+  max-height:410px;
+  display:none;
+  overflow:hidden;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow-hover);
+}
+
+.filter-popover.open {
+  display:block;
+}
+
+.filter-popover-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:11px 12px;
+  background:var(--surface2);
+  border-bottom:1px solid var(--border);
+}
+
+.filter-popover-head strong {
+  font-size:10.5px;
+  text-transform:uppercase;
+  letter-spacing:.055em;
+}
+
+.filter-link {
+  padding:0;
+  border:0;
+  background:transparent;
+  color:var(--accent);
+  cursor:pointer;
+  font-size:10.5px;
+  font-weight:800;
+}
+
+.filter-options {
+  max-height:340px;
+  overflow:auto;
+  padding:7px;
+}
+
+.check-option {
+  display:grid;
+  grid-template-columns:18px minmax(0,1fr) auto;
+  gap:9px;
+  align-items:center;
+  min-height:36px;
+  padding:7px 8px;
+  border-radius:8px;
+  cursor:pointer;
+}
+
+.check-option:hover {
+  background:var(--surface2);
+}
+
+.check-option input {
+  width:16px;
+  height:16px;
+  margin:0;
+  accent-color:var(--accent);
+  cursor:pointer;
+}
+
+.check-label {
+  min-width:0;
+  overflow:hidden;
+  color:var(--text);
+  font-size:11.5px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.check-count {
+  min-width:28px;
+  padding:2px 6px;
+  border-radius:999px;
+  background:var(--surface3);
+  color:var(--muted);
+  font-size:9.5px;
+  font-weight:800;
+  text-align:center;
+}
+
+.active-filter-count {
+  min-width:19px;
+  height:19px;
+  max-width:none;
+  display:inline-grid;
+  place-items:center;
+  padding:0 6px;
+  border-radius:999px;
+  background:var(--accent);
+  color:#fff;
+  font-size:9.5px;
+  font-weight:900;
+}
+
+.result-count {
+  margin-left:auto;
+  min-height:38px;
+  display:flex;
+  align-items:center;
+  padding:0 6px;
+  color:var(--muted);
+  font-size:11.5px;
+}
+
+.table-wrap {
+  overflow:auto;
+  max-height:760px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+}
+
+table {
+  width:100%;
+  border-collapse:collapse;
+  font-size:12.5px;
+  white-space:nowrap;
+}
+
+th {
+  position:sticky;
+  top:0;
+  z-index:2;
+  padding:11px 12px;
+  background:var(--surface2);
+  border-bottom:1px solid var(--border);
+  color:var(--muted);
+  text-align:left;
+  font-size:10px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.045em;
+  cursor:pointer;
+  user-select:none;
+}
+
+th[data-sort]::after {
+  content:" ↕";
+  opacity:.45;
+}
+
+td {
+  padding:10px 12px;
+  border-bottom:1px solid var(--border);
+  vertical-align:top;
+}
+
+tbody tr.data-row:hover td {
+  background:var(--surface2);
+}
+
+tbody tr:last-child td {
+  border-bottom:0;
+}
+
+.name-cell {
+  white-space:normal;
+  min-width:340px;
+  max-width:720px;
+}
+
+.test-name {
+  font-weight:700;
+  color:var(--text);
+}
+
+.test-id {
+  margin-top:3px;
+  color:var(--muted);
+  font-size:10.5px;
+}
+
+/* =========================================================
+   GENERIC PILLS
+   Service and Severity keep the existing visual style
+   ========================================================= */
+
+.pill {
+  display:inline-flex;
+  align-items:center;
+  padding:3px 8px;
+  border:1px solid var(--border);
+  border-radius:999px;
+  background:var(--surface3);
+  color:var(--muted);
+  font-size:10.5px;
+  font-weight:700;
+}
+
+.pill.good {
+  background:var(--green-soft);
+  border-color:transparent;
+  color:var(--green) !important;
+}
+
+.pill.bad {
+  background:var(--red-soft);
+  border-color:transparent;
+  color:var(--red) !important;
+}
+
+.pill.warn {
+  background:var(--amber-soft);
+  border-color:transparent;
+  color:var(--amber) !important;
+}
+
+.pill.investigate {
+  background:var(--purple-soft);
+  border-color:transparent;
+  color:var(--purple) !important;
+}
+
+.pill.neutral {
+  background:var(--gray-soft);
+  border-color:transparent;
+  color:var(--gray) !important;
+}
+
+.pill.critical {
+  background:var(--red-soft);
+  border-color:transparent;
+  color:var(--red) !important;
+}
+
+.pill.high {
+  background:var(--amber-soft);
+  border-color:transparent;
+  color:var(--amber) !important;
+}
+
+.pill.medium {
+  background:var(--purple-soft);
+  border-color:transparent;
+  color:var(--purple) !important;
+}
+
+.pill.low {
+  background:var(--green-soft);
+  border-color:transparent;
+  color:var(--green) !important;
+}
+
+
+/* =========================================================
+   STATUS BADGES
+   STYLE ONLY
+   Compact result badge matching the supplied screenshot
+   ========================================================= */
+
+.data-row td:first-child {
+  vertical-align:middle;
+}
+
+.data-row td:first-child .pill {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+
+  min-height:24px;
+  padding:5px 9px;
+
+  border:0;
+  border-radius:8px;
+
+  font-size:10.5px;
+  font-weight:700;
+  line-height:1;
+  letter-spacing:0;
+
+  box-shadow:none;
+}
+
+/* Small round status dot */
+.data-row td:first-child .pill::before {
+  content:"";
+  display:block;
+  width:6px;
+  height:6px;
+  min-width:6px;
+  flex:0 0 6px;
+  border-radius:999px;
+  background:currentColor;
+  opacity:.78;
+}
+
+/* FAILED + ERROR - screenshot style */
+.data-row td:first-child .pill.bad {
+  background:#fde9ec;
+  color:#d9485f !important;
+}
+
+/* PASSED */
+.data-row td:first-child .pill.good {
+  background:#e7f7ef;
+  color:#27966a !important;
+}
+
+/* SKIPPED */
+.data-row td:first-child .pill.warn {
+  background:#fff4dc;
+  color:#c48417 !important;
+}
+
+/* INVESTIGATE */
+.data-row td:first-child .pill.investigate {
+  background:#f3eafb;
+  color:#8c55b6 !important;
+}
+
+/* NOT RUN */
+.data-row td:first-child .pill.neutral {
+  background:#eef1f5;
+  color:#667085 !important;
+}
+
+/* Dark-mode equivalents */
+[data-theme="dark"] .data-row td:first-child .pill.bad {
+  background:rgba(217,72,95,.16);
+  color:#ff8497 !important;
+}
+
+[data-theme="dark"] .data-row td:first-child .pill.good {
+  background:rgba(39,150,106,.17);
+  color:#67d6a6 !important;
+}
+
+[data-theme="dark"] .data-row td:first-child .pill.warn {
+  background:rgba(196,132,23,.18);
+  color:#f2bf5b !important;
+}
+
+[data-theme="dark"] .data-row td:first-child .pill.investigate {
+  background:rgba(140,85,182,.19);
+  color:#d0a4f0 !important;
+}
+
+[data-theme="dark"] .data-row td:first-child .pill.neutral {
+  background:rgba(102,112,133,.22);
+  color:#b9c0ce !important;
+}
+
+
+/* =========================================================
+   DETAIL ROW
+   ========================================================= */
+
+.detail-row {
+  display:none;
+}
+
+.detail-row.open {
+  display:table-row;
+}
+
+.detail-row td {
+  padding:0;
+  background:var(--surface2);
+  white-space:normal;
+}
+
+.detail-panel {
+  padding:18px 20px 20px;
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:16px;
+  border-bottom:1px solid var(--border);
+}
+
+.detail-block {
+  min-width:0;
+}
+
+.detail-block.full {
+  grid-column:1 / -1;
+}
+
+.detail-heading {
+  margin-bottom:7px;
+  color:var(--muted);
+  font-size:10px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.055em;
+}
+
+.detail-text {
+  margin:0;
+  padding:14px;
+  min-height:58px;
+  max-height:460px;
+  overflow:auto;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface);
+  color:var(--text);
+  font:12px/1.6 var(--font);
+  overflow-wrap:anywhere;
+}
+
+.detail-text p {
+  margin:0 0 10px;
+}
+
+.detail-text p:last-child {
+  margin-bottom:0;
+}
+
+.detail-text ul,
+.detail-text ol {
+  margin:8px 0 10px;
+  padding-left:22px;
+}
+
+.detail-text li {
+  margin:6px 0;
+  padding-left:2px;
+}
+
+.detail-text a {
+  color:var(--accent);
+  font-weight:650;
+  text-decoration:none;
+  overflow-wrap:anywhere;
+}
+
+.detail-text a:hover {
+  text-decoration:underline;
+}
+
+.detail-text .detail-title {
+  margin:12px 0 7px;
+  color:var(--text);
+  font-size:12px;
+  font-weight:800;
+}
+
+.detail-text .detail-title:first-child {
+  margin-top:0;
+}
+
+.detail-text .result-callout {
+  display:flex;
+  align-items:flex-start;
+  gap:9px;
+  margin:0 0 12px;
+  padding:10px 12px;
+  border-radius:var(--radius-sm);
+  border:1px solid var(--border);
+  background:var(--surface2);
+}
+
+.detail-text .result-callout.good {
+  background:var(--green-soft);
+  border-color:transparent;
+  color:var(--green) !important;
+}
+
+.detail-text .result-callout.bad {
+  background:var(--red-soft);
+  border-color:transparent;
+  color:var(--red) !important;
+}
+
+.detail-text .result-callout.warn {
+  background:var(--amber-soft);
+  border-color:transparent;
+  color:var(--amber) !important;
+}
+
+.detail-text .result-icon {
+  flex:0 0 auto;
+  font-weight:900;
+}
+
+.detail-object {
+  display:grid;
+  gap:10px;
+}
+
+.detail-object-row {
+  padding:10px 12px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface2);
+}
+
+.detail-object-key {
+  margin-bottom:5px;
+  color:var(--muted);
+  font-size:9.5px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.055em;
+}
+
+.metadata-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:9px;
+}
+
+.metadata-item {
+  min-width:0;
+  padding:10px 12px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface2);
+}
+
+.metadata-label {
+  display:block;
+  margin-bottom:3px;
+  color:var(--muted);
+  font-size:9px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.055em;
+}
+
+.metadata-value {
+  color:var(--text);
+  font-size:11.5px;
+  overflow-wrap:anywhere;
+}
+
+.metadata-value a {
+  color:var(--accent);
+  font-weight:700;
+  text-decoration:none;
+}
+
+.metadata-value a:hover {
+  text-decoration:underline;
+}
+
+.empty-state {
+  display:none;
+  padding:46px 20px;
+  color:var(--muted);
+  text-align:center;
+}
+
+footer {
+  max-width:1800px;
+  margin:0 auto;
+  padding:0 32px 32px;
+  color:var(--muted);
+  font-size:11.5px;
+}
+
+@media (max-width:1180px) {
+  .mini-grid {
+    grid-template-columns:1fr;
+  }
+}
+
+@media (max-width:820px) {
+  .topbar {
+    align-items:flex-start;
+    padding:12px 16px;
+    flex-wrap:wrap;
+  }
+
+  .topbar-actions {
+    width:100%;
+    margin-left:54px;
+    flex-wrap:wrap;
+  }
+
+  .generated {
+    margin-left:auto;
+  }
+
+  .layout {
+    padding:20px 16px 30px;
+  }
+
+  .detail-panel {
+    grid-template-columns:1fr;
+  }
+
+  .detail-block.full {
+    grid-column:auto;
+  }
+
+  input[type="search"] {
+    min-width:100%;
+  }
+
+  .filter-menu {
+    flex:1 1 calc(50% - 6px);
+  }
+
+  .filter-trigger {
+    width:100%;
+    min-width:0;
+  }
+
+  .filter-popover {
+    left:0;
+    right:auto;
+    width:min(330px,calc(100vw - 32px));
+  }
+}
+
 @media print {
-  header { position:static; }
-  .topbar-actions .btn, .toolbar, .details-button { display:none !important; }
-  .table-wrap { max-height:none; overflow:visible; }
-  .table-wrap, .grid > .card, .section .card { box-shadow:none; }
-  .detail-row { display:none !important; }
+  header {
+    position:static;
+  }
+
+  .topbar-actions .btn,
+  .toolbar,
+  .details-button {
+    display:none !important;
+  }
+
+  .table-wrap {
+    max-height:none;
+    overflow:visible;
+  }
+
+  .table-wrap,
+  .grid > .card,
+  .section .card {
+    box-shadow:none;
+  }
+
+  .detail-row {
+    display:none !important;
+  }
 }
 </style>
 </head>
+
 <body>
+
 <header>
   <div class="topbar">
     <div class="brand-left">
       <div class="logo-fallback" aria-hidden="true">M</div>
       <div>
-        <h1>Maester Security Assessment</h1>
+        <h1>ITI365 - Security Assessment</h1>
         <div class="subtitle" id="tenantSubtitle"></div>
       </div>
     </div>
+
     <div class="topbar-actions">
       <a id="originalReportButton" class="btn" href="#">Original report</a>
       <button class="btn" type="button" id="exportButton">Export CSV</button>
       <button class="btn" type="button" onclick="window.print()">Print</button>
       <button class="btn" type="button" id="themeButton">Dark mode</button>
     </div>
+
     <div class="generated" id="generatedBlock"></div>
   </div>
 </header>
 
 <main class="layout">
+
   <section class="grid" aria-label="Assessment summary">
+
     <article class="card">
       <div class="card-title">Security score</div>
       <div class="card-value info" id="scoreValue">0%</div>
       <div class="card-note">Passed checks among assessed results</div>
     </article>
+
     <article class="card card-good">
       <div class="card-title">Passed</div>
       <div class="card-value good" id="passedValue">0</div>
       <div class="card-note">Checks completed successfully</div>
     </article>
+
     <article class="card card-bad">
       <div class="card-title">Failed</div>
       <div class="card-value bad" id="failedValue">0</div>
       <div class="card-note">Configuration changes recommended</div>
     </article>
+
     <article class="card card-investigate">
       <div class="card-title">Investigate</div>
       <div class="card-value investigate" id="investigateValue">0</div>
       <div class="card-note">Manual validation required</div>
     </article>
+
     <article class="card card-warn">
       <div class="card-title">Skipped / not run</div>
       <div class="card-value warn" id="skippedValue">0</div>
       <div class="card-note">Licensing, connection or applicability</div>
     </article>
+
     <article class="card">
       <div class="card-title">Total tests</div>
       <div class="card-value" id="totalValue">0</div>
       <div class="card-note" id="durationNote">Complete Maester assessment</div>
     </article>
+
   </section>
 
   <section class="section">
     <h2>Assessment overview</h2>
+
     <div class="mini-grid">
+
       <article class="card chart-card">
-        <div class="pie" id="statusPie"><div class="pie-center"><span id="statusPieValue">0</span><small>tests</small></div></div>
+        <div class="pie" id="statusPie">
+          <div class="pie-center">
+            <span id="statusPieValue">0</span>
+            <small>tests</small>
+          </div>
+        </div>
+
         <div>
           <h3 class="chart-list-title">Result distribution</h3>
           <div class="legend" id="statusLegend"></div>
         </div>
       </article>
+
       <article class="card chart-list-card">
         <h3 class="chart-list-title">Severity distribution</h3>
         <div class="bar-list" id="severityBars"></div>
       </article>
+
       <article class="card chart-list-card">
         <h3 class="chart-list-title">Tests by service</h3>
         <div class="bar-list" id="serviceBars"></div>
       </article>
+
     </div>
   </section>
 
   <section class="section">
     <h2>Detailed test analysis</h2>
+
     <div class="toolbar">
-      <input id="searchInput" type="search" placeholder="Search test name, ID, service, description or result…" autocomplete="off">
+
+      <input
+        id="searchInput"
+        type="search"
+        placeholder="Search test name, ID, service, description or result…"
+        autocomplete="off"
+      >
 
       <div class="filter-menu">
-        <button class="filter-trigger" type="button" data-filter-trigger="statuses" aria-expanded="false" aria-controls="statusesMenu">
-          <span class="filter-label">Status</span><span class="filter-summary" id="statusesSummary">All</span><span class="filter-chevron">▼</span>
+        <button
+          class="filter-trigger"
+          type="button"
+          data-filter-trigger="statuses"
+          aria-expanded="false"
+          aria-controls="statusesMenu"
+        >
+          <span class="filter-label">Status</span>
+          <span class="filter-summary" id="statusesSummary">All</span>
+          <span class="filter-chevron">▼</span>
         </button>
+
         <div class="filter-popover" id="statusesMenu">
-          <div class="filter-popover-head"><strong>Status</strong><button class="filter-link" type="button" data-clear-filter="statuses">Clear all</button></div>
+          <div class="filter-popover-head">
+            <strong>Status</strong>
+            <button class="filter-link" type="button" data-clear-filter="statuses">Clear all</button>
+          </div>
+
           <div class="filter-options" id="statusesOptions"></div>
         </div>
       </div>
 
       <div class="filter-menu">
-        <button class="filter-trigger" type="button" data-filter-trigger="severities" aria-expanded="false" aria-controls="severitiesMenu">
-          <span class="filter-label">Severity</span><span class="filter-summary" id="severitiesSummary">All</span><span class="filter-chevron">▼</span>
+        <button
+          class="filter-trigger"
+          type="button"
+          data-filter-trigger="severities"
+          aria-expanded="false"
+          aria-controls="severitiesMenu"
+        >
+          <span class="filter-label">Severity</span>
+          <span class="filter-summary" id="severitiesSummary">All</span>
+          <span class="filter-chevron">▼</span>
         </button>
+
         <div class="filter-popover" id="severitiesMenu">
-          <div class="filter-popover-head"><strong>Severity</strong><button class="filter-link" type="button" data-clear-filter="severities">Clear all</button></div>
+          <div class="filter-popover-head">
+            <strong>Severity</strong>
+            <button class="filter-link" type="button" data-clear-filter="severities">Clear all</button>
+          </div>
+
           <div class="filter-options" id="severitiesOptions"></div>
         </div>
       </div>
 
       <div class="filter-menu">
-        <button class="filter-trigger" type="button" data-filter-trigger="services" aria-expanded="false" aria-controls="servicesMenu">
-          <span class="filter-label">Service</span><span class="filter-summary" id="servicesSummary">All</span><span class="filter-chevron">▼</span>
+        <button
+          class="filter-trigger"
+          type="button"
+          data-filter-trigger="services"
+          aria-expanded="false"
+          aria-controls="servicesMenu"
+        >
+          <span class="filter-label">Service</span>
+          <span class="filter-summary" id="servicesSummary">All</span>
+          <span class="filter-chevron">▼</span>
         </button>
+
         <div class="filter-popover" id="servicesMenu">
-          <div class="filter-popover-head"><strong>Service</strong><button class="filter-link" type="button" data-clear-filter="services">Clear all</button></div>
+          <div class="filter-popover-head">
+            <strong>Service</strong>
+            <button class="filter-link" type="button" data-clear-filter="services">Clear all</button>
+          </div>
+
           <div class="filter-options" id="servicesOptions"></div>
         </div>
       </div>
 
       <button class="btn" type="button" id="clearButton">Clear filters</button>
-      <div class="result-count"><strong id="visibleCount">0</strong>&nbsp;visible</div>
+
+      <div class="result-count">
+        <strong id="visibleCount">0</strong>&nbsp;visible
+      </div>
+
     </div>
 
     <div class="table-wrap">
@@ -2023,21 +2964,34 @@ footer { max-width:1800px; margin:0 auto; padding:0 32px 32px; color:var(--muted
             <th>Analysis</th>
           </tr>
         </thead>
+
         <tbody id="resultsBody"></tbody>
       </table>
-      <div class="empty-state" id="emptyState">No tests match the current filters.</div>
+
+      <div class="empty-state" id="emptyState">
+        No tests match the current filters.
+      </div>
     </div>
+
   </section>
+
 </main>
 
 <footer>
-  Generated from the same Maester execution as the preserved original report. This dashboard is self-contained and can be archived or shared as a single HTML file.
+  Generated from ITI365 execution as the preserved original report.
+  This dashboard is self-contained and can be archived or shared as a single HTML file.
 </footer>
 
 <script>
 const report = __DATA_JSON__;
-let sortState = { key: 'Status', direction: 'asc' };
+
+let sortState = {
+  key: 'Status',
+  direction: 'asc'
+};
+
 let visibleTests = [...report.tests];
+
 const filterState = {
   statuses: new Set(),
   severities: new Set(),
@@ -2076,12 +3030,17 @@ function statusClass(status) {
   if (status === 'Failed' || status === 'Error') return 'bad';
   if (status === 'Investigate') return 'investigate';
   if (status === 'Skipped') return 'warn';
+
   return 'neutral';
 }
 
 function severityClass(severity) {
   const value = String(severity || '').toLowerCase();
-  if (['critical','high','medium','low'].includes(value)) return value;
+
+  if (['critical','high','medium','low'].includes(value)) {
+    return value;
+  }
+
   return 'neutral';
 }
 
@@ -2100,63 +3059,115 @@ function setSummary() {
   originalButton.target = '_blank';
   originalButton.rel = 'noopener';
 
-  document.getElementById('scoreValue').textContent = `${report.summary.score}%`;
-  document.getElementById('passedValue').textContent = report.summary.passed;
-  document.getElementById('failedValue').textContent = report.summary.failed;
-  document.getElementById('investigateValue').textContent = report.summary.investigate;
-  document.getElementById('skippedValue').textContent = report.summary.skipped + report.summary.notRun;
-  document.getElementById('totalValue').textContent = report.summary.total;
-  document.getElementById('durationNote').textContent = report.tenant.runDuration
-    ? `Completed in ${report.tenant.runDuration}`
-    : 'Complete Maester assessment';
+  document.getElementById('scoreValue').textContent =
+    `${report.summary.score}%`;
+
+  document.getElementById('passedValue').textContent =
+    report.summary.passed;
+
+  document.getElementById('failedValue').textContent =
+    report.summary.failed;
+
+  document.getElementById('investigateValue').textContent =
+    report.summary.investigate;
+
+  document.getElementById('skippedValue').textContent =
+    report.summary.skipped + report.summary.notRun;
+
+  document.getElementById('totalValue').textContent =
+    report.summary.total;
+
+  document.getElementById('durationNote').textContent =
+    report.tenant.runDuration
+      ? `Completed in ${report.tenant.runDuration}`
+      : 'Complete Maester assessment';
 }
 
 function createConicGradient(counts) {
-  const entries = Object.entries(counts).filter(([, count]) => Number(count) > 0);
-  const total = entries.reduce((sum, [, count]) => sum + Number(count), 0);
-  if (!total) return 'var(--surface3)';
+  const entries = Object.entries(counts)
+    .filter(([, count]) => Number(count) > 0);
+
+  const total = entries.reduce(
+    (sum, [, count]) => sum + Number(count),
+    0
+  );
+
+  if (!total) {
+    return 'var(--surface3)';
+  }
 
   let current = 0;
+
   const slices = entries.map(([name, count]) => {
     const start = (current / total) * 360;
     current += Number(count);
     const end = (current / total) * 360;
+
     return `${statusColors[name] || 'var(--accent)'} ${start}deg ${end}deg`;
   });
+
   return `conic-gradient(${slices.join(',')})`;
 }
 
 function renderCharts() {
   const statusPie = document.getElementById('statusPie');
-  statusPie.style.background = createConicGradient(report.statusCounts);
-  document.getElementById('statusPieValue').textContent = report.summary.total;
 
-  const statusLegend = document.getElementById('statusLegend');
-  statusLegend.innerHTML = Object.entries(report.statusCounts).map(([name, count]) => `
-    <div class="legend-row">
-      <span class="dot ${statusDotClasses[name] || 'blue'}"></span>
-      <span>${escapeHtml(name)}</span>
-      <strong>${count}</strong>
-    </div>`).join('');
+  statusPie.style.background =
+    createConicGradient(report.statusCounts);
+
+  document.getElementById('statusPieValue').textContent =
+    report.summary.total;
+
+  const statusLegend =
+    document.getElementById('statusLegend');
+
+  statusLegend.innerHTML =
+    Object.entries(report.statusCounts).map(([name, count]) => `
+      <div class="legend-row">
+        <span class="dot ${statusDotClasses[name] || 'blue'}"></span>
+        <span>${escapeHtml(name)}</span>
+        <strong>${count}</strong>
+      </div>
+    `).join('');
 
   renderBars('severityBars', report.severityCounts, 7);
   renderBars('serviceBars', report.serviceCounts, 8);
 }
 
 function renderBars(elementId, counts, limit) {
-  const entries = Object.entries(counts).slice(0, limit);
-  const max = Math.max(1, ...entries.map(([, count]) => Number(count)));
-  document.getElementById(elementId).innerHTML = entries.map(([name, count]) => `
-    <div class="bar-row" title="${escapeHtml(name)}: ${count}">
-      <div class="bar-label">${escapeHtml(name)}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, (Number(count) / max) * 100)}%"></div></div>
-      <div class="bar-count">${count}</div>
-    </div>`).join('');
+  const entries =
+    Object.entries(counts).slice(0, limit);
+
+  const max =
+    Math.max(1, ...entries.map(([, count]) => Number(count)));
+
+  document.getElementById(elementId).innerHTML =
+    entries.map(([name, count]) => `
+      <div class="bar-row" title="${escapeHtml(name)}: ${count}">
+        <div class="bar-label">${escapeHtml(name)}</div>
+
+        <div class="bar-track">
+          <div
+            class="bar-fill"
+            style="width:${Math.max(2, (Number(count) / max) * 100)}%">
+          </div>
+        </div>
+
+        <div class="bar-count">${count}</div>
+      </div>
+    `).join('');
 }
 
 function uniqueValues(property) {
-  return [...new Set(report.tests.map(test => test[property]).filter(Boolean))]
-    .sort((a, b) => String(a).localeCompare(String(b)));
+  return [
+    ...new Set(
+      report.tests
+        .map(test => test[property])
+        .filter(Boolean)
+    )
+  ].sort((a, b) =>
+    String(a).localeCompare(String(b))
+  );
 }
 
 function countValues(values) {
@@ -2170,46 +3181,84 @@ const filterDefinitions = {
   statuses: {
     property: 'Status',
     values: uniqueValues('Status'),
-    counts: countValues(report.tests.map(test => test.Status).filter(Boolean)),
+    counts: countValues(
+      report.tests.map(test => test.Status).filter(Boolean)
+    ),
     optionsId: 'statusesOptions',
     summaryId: 'statusesSummary'
   },
+
   severities: {
     property: 'Severity',
     values: uniqueValues('Severity'),
-    counts: countValues(report.tests.map(test => test.Severity).filter(Boolean)),
+    counts: countValues(
+      report.tests.map(test => test.Severity).filter(Boolean)
+    ),
     optionsId: 'severitiesOptions',
     summaryId: 'severitiesSummary'
   },
+
   services: {
     property: 'Service',
     values: uniqueValues('Service'),
-    counts: countValues(report.tests.map(test => test.Service).filter(Boolean)),
+    counts: countValues(
+      report.tests.map(test => test.Service).filter(Boolean)
+    ),
     optionsId: 'servicesOptions',
     summaryId: 'servicesSummary'
   }
 };
 
 function renderFilterOptions(filterName) {
-  const definition = filterDefinitions[filterName];
-  const selected = filterState[filterName];
-  const container = document.getElementById(definition.optionsId);
+  const definition =
+    filterDefinitions[filterName];
 
-  container.innerHTML = definition.values.map((value, index) => {
-    const id = `${filterName}-${index}`;
-    return `<label class="check-option" for="${id}" title="${escapeHtml(value)}">
-      <input id="${id}" type="checkbox" data-filter-name="${filterName}" value="${escapeHtml(value)}" ${selected.has(value) ? 'checked' : ''}>
-      <span class="check-label">${escapeHtml(value)}</span>
-      <span class="check-count">${definition.counts.get(value) || 0}</span>
-    </label>`;
-  }).join('');
+  const selected =
+    filterState[filterName];
+
+  const container =
+    document.getElementById(definition.optionsId);
+
+  container.innerHTML =
+    definition.values.map((value, index) => {
+      const id = `${filterName}-${index}`;
+
+      return `
+        <label
+          class="check-option"
+          for="${id}"
+          title="${escapeHtml(value)}"
+        >
+          <input
+            id="${id}"
+            type="checkbox"
+            data-filter-name="${filterName}"
+            value="${escapeHtml(value)}"
+            ${selected.has(value) ? 'checked' : ''}
+          >
+
+          <span class="check-label">
+            ${escapeHtml(value)}
+          </span>
+
+          <span class="check-count">
+            ${definition.counts.get(value) || 0}
+          </span>
+        </label>
+      `;
+    }).join('');
 
   updateFilterSummary(filterName);
 }
 
 function updateFilterSummary(filterName) {
-  const selected = filterState[filterName];
-  const summary = document.getElementById(filterDefinitions[filterName].summaryId);
+  const selected =
+    filterState[filterName];
+
+  const summary =
+    document.getElementById(
+      filterDefinitions[filterName].summaryId
+    );
 
   if (!selected.size) {
     summary.textContent = 'All';
@@ -2217,61 +3266,120 @@ function updateFilterSummary(filterName) {
     return;
   }
 
-  summary.textContent = selected.size === 1 ? [...selected][0] : `${selected.size} selected`;
-  summary.classList.toggle('active-filter-count', selected.size > 1);
+  summary.textContent =
+    selected.size === 1
+      ? [...selected][0]
+      : `${selected.size} selected`;
+
+  summary.classList.toggle(
+    'active-filter-count',
+    selected.size > 1
+  );
 }
 
 function closeFilterMenus(exceptName = '') {
-  document.querySelectorAll('[data-filter-trigger]').forEach(trigger => {
-    const filterName = trigger.dataset.filterTrigger;
-    const menu = document.getElementById(`${filterName}Menu`);
-    const keepOpen = filterName === exceptName;
-    trigger.setAttribute('aria-expanded', keepOpen ? 'true' : 'false');
-    menu.classList.toggle('open', keepOpen);
-  });
+  document
+    .querySelectorAll('[data-filter-trigger]')
+    .forEach(trigger => {
+
+      const filterName =
+        trigger.dataset.filterTrigger;
+
+      const menu =
+        document.getElementById(`${filterName}Menu`);
+
+      const keepOpen =
+        filterName === exceptName;
+
+      trigger.setAttribute(
+        'aria-expanded',
+        keepOpen ? 'true' : 'false'
+      );
+
+      menu.classList.toggle(
+        'open',
+        keepOpen
+      );
+    });
 }
 
-
 function safeUrl(value) {
-  const url = String(value || '').trim();
-  return /^https?:\/\//i.test(url) ? url : '';
+  const url =
+    String(value || '').trim();
+
+  return /^https?:\/\//i.test(url)
+    ? url
+    : '';
 }
 
 function createLinkToken(label, url, tokens) {
   const safe = safeUrl(url);
-  if (!safe) return label;
-  const token = `@@MAESTER_LINK_${tokens.length}@@`;
-  tokens.push(`<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label || safe)}</a>`);
+
+  if (!safe) {
+    return label;
+  }
+
+  const token =
+    `@@MAESTER_LINK_${tokens.length}@@`;
+
+  tokens.push(
+    `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label || safe)}</a>`
+  );
+
   return token;
 }
 
 function linkifyText(value) {
-  let text = String(value ?? '');
+  let text =
+    String(value ?? '');
+
   const tokens = [];
 
-  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi, (_, label, url) =>
-    createLinkToken(label, url, tokens)
+  text = text.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi,
+    (_, label, url) =>
+      createLinkToken(label, url, tokens)
   );
 
-  text = text.replace(/https?:\/\/[^\s<>"')\]]+/gi, url =>
-    createLinkToken(url, url, tokens)
+  text = text.replace(
+    /https?:\/\/[^\s<>"')\]]+/gi,
+    url =>
+      createLinkToken(url, url, tokens)
   );
 
-  let encoded = escapeHtml(text);
+  let encoded =
+    escapeHtml(text);
+
   tokens.forEach((link, index) => {
-    encoded = encoded.replace(`@@MAESTER_LINK_${index}@@`, link);
+    encoded = encoded.replace(
+      `@@MAESTER_LINK_${index}@@`,
+      link
+    );
   });
+
   return encoded;
 }
 
 function tryParseDetailJson(value) {
-  if (typeof value !== 'string') return value;
-  const text = value.trim();
-  if (!text || (!text.startsWith('{') && !text.startsWith('['))) return value;
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const text =
+    value.trim();
+
+  if (
+    !text ||
+    (!text.startsWith('{') &&
+     !text.startsWith('['))
+  ) {
+    return value;
+  }
 
   try {
     return JSON.parse(text);
-  } catch {
+  }
+  catch {
     return value;
   }
 }
@@ -2284,33 +3392,44 @@ function prettifyKey(value) {
 }
 
 function removeExcludedMarkdownSections(value) {
-  const text = String(value ?? '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/\\n/g, '\n')
-    .replace(/\\t/g, '  ');
+  const text =
+    String(value ?? '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '  ');
 
   const output = [];
   let skipSection = false;
   let skipHeadingLevel = 0;
 
   for (const rawLine of text.split('\n')) {
-    const heading = rawLine.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
+
+    const heading =
+      rawLine.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
 
     if (skipSection) {
-      if (heading && heading[1].length <= skipHeadingLevel) {
+      if (
+        heading &&
+        heading[1].length <= skipHeadingLevel
+      ) {
         skipSection = false;
         skipHeadingLevel = 0;
-      } else {
+      }
+      else {
         continue;
       }
     }
 
     if (heading) {
-      const headingText = heading[2]
-        .trim()
-        .replace(/^[*_`\s]+|[*_`\s]+$/g, '');
+      const headingText =
+        heading[2]
+          .trim()
+          .replace(/^[*_`\s]+|[*_`\s]+$/g, '');
 
-      if (/^(?:Remediation\s+action|Related\s+links)\s*:?\s*$/i.test(headingText)) {
+      if (
+        /^(?:Remediation\s+action|Related\s+links)\s*:?\s*$/i
+          .test(headingText)
+      ) {
         skipSection = true;
         skipHeadingLevel = heading[1].length;
         continue;
@@ -2320,16 +3439,25 @@ function removeExcludedMarkdownSections(value) {
     output.push(rawLine);
   }
 
-  return output.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return output
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function formatTextContent(value, tone = '') {
-  const text = removeExcludedMarkdownSections(value);
+  const text =
+    removeExcludedMarkdownSections(value);
 
-  if (!text) return '<p>No information was provided.</p>';
+  if (!text) {
+    return '<p>No information was provided.</p>';
+  }
 
-  const lines = text.split('\n');
+  const lines =
+    text.split('\n');
+
   const output = [];
+
   let listType = '';
 
   const closeList = () => {
@@ -2340,75 +3468,137 @@ function formatTextContent(value, tone = '') {
   };
 
   for (const originalLine of lines) {
-    const line = originalLine.trim();
+    const line =
+      originalLine.trim();
 
     if (!line) {
       closeList();
       continue;
     }
 
-    const bullet = line.match(/^[-*•]\s+(.+)$/);
-    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    const bullet =
+      line.match(/^[-*•]\s+(.+)$/);
+
+    const numbered =
+      line.match(/^\d+[.)]\s+(.+)$/);
 
     if (bullet || numbered) {
-      const requiredType = bullet ? 'ul' : 'ol';
+      const requiredType =
+        bullet ? 'ul' : 'ol';
+
       if (listType !== requiredType) {
         closeList();
         listType = requiredType;
         output.push(`<${listType}>`);
       }
-      output.push(`<li>${linkifyText((bullet || numbered)[1])}</li>`);
+
+      output.push(
+        `<li>${linkifyText((bullet || numbered)[1])}</li>`
+      );
+
       continue;
     }
 
     closeList();
 
-    const heading = line.match(/^#{1,5}\s+(.+)$/);
+    const heading =
+      line.match(/^#{1,5}\s+(.+)$/);
+
     if (heading) {
-      output.push(`<div class="detail-title">${linkifyText(heading[1])}</div>`);
+      output.push(
+        `<div class="detail-title">${linkifyText(heading[1])}</div>`
+      );
+
       continue;
     }
 
-    const isSuccess = /^(well done|passed|success)/i.test(line);
-    const isFailure = /^(failed|failure|error)/i.test(line);
+    const isSuccess =
+      /^(well done|passed|success)/i.test(line);
+
+    const isFailure =
+      /^(failed|failure|error)/i.test(line);
+
     if (isSuccess || isFailure) {
-      const calloutTone = isSuccess ? 'good' : 'bad';
-      const icon = isSuccess ? '✓' : '!';
-      output.push(`<div class="result-callout ${calloutTone}"><span class="result-icon">${icon}</span><span>${linkifyText(line)}</span></div>`);
+      const calloutTone =
+        isSuccess ? 'good' : 'bad';
+
+      const icon =
+        isSuccess ? '✓' : '!';
+
+      output.push(
+        `<div class="result-callout ${calloutTone}"><span class="result-icon">${icon}</span><span>${linkifyText(line)}</span></div>`
+      );
+
       continue;
     }
 
-    output.push(`<p>${linkifyText(line)}</p>`);
+    output.push(
+      `<p>${linkifyText(line)}</p>`
+    );
   }
 
   closeList();
+
   return output.join('');
 }
 
 function formatDetailValue(value, tone = '') {
-  const parsed = tryParseDetailJson(value);
+  const parsed =
+    tryParseDetailJson(value);
 
-  if (parsed === null || parsed === undefined || parsed === '') {
+  if (
+    parsed === null ||
+    parsed === undefined ||
+    parsed === ''
+  ) {
     return '<p>No information was provided.</p>';
   }
 
   if (Array.isArray(parsed)) {
-    if (!parsed.length) return '<p>No information was provided.</p>';
-    return `<ul>${parsed.map(item => `<li>${typeof item === 'object' ? formatDetailValue(item, tone) : linkifyText(item)}</li>`).join('')}</ul>`;
+    if (!parsed.length) {
+      return '<p>No information was provided.</p>';
+    }
+
+    return `<ul>${
+      parsed.map(item =>
+        `<li>${
+          typeof item === 'object'
+            ? formatDetailValue(item, tone)
+            : linkifyText(item)
+        }</li>`
+      ).join('')
+    }</ul>`;
   }
 
   if (typeof parsed === 'object') {
-    const entries = Object.entries(parsed).filter(([, item]) =>
-      item !== null && item !== undefined && String(item).trim() !== ''
-    );
+    const entries =
+      Object.entries(parsed).filter(([, item]) =>
+        item !== null &&
+        item !== undefined &&
+        String(item).trim() !== ''
+      );
 
-    if (!entries.length) return '<p>No information was provided.</p>';
+    if (!entries.length) {
+      return '<p>No information was provided.</p>';
+    }
 
-    return `<div class="detail-object">${entries.map(([key, item]) => `
-      <div class="detail-object-row">
-        <div class="detail-object-key">${escapeHtml(prettifyKey(key))}</div>
-        <div>${formatDetailValue(item, tone)}</div>
-      </div>`).join('')}</div>`;
+    return `
+      <div class="detail-object">
+        ${
+          entries.map(([key, item]) => `
+            <div class="detail-object-row">
+              <div class="detail-object-key">
+                ${escapeHtml(prettifyKey(key))}
+              </div>
+
+              <div>
+                ${formatDetailValue(item, tone)}
+              </div>
+            </div>
+          `).join('')
+        }
+      </div>
+    `;
   }
 
   return formatTextContent(parsed, tone);
@@ -2426,244 +3616,623 @@ function formatMetadata(test) {
     ['Documentation', test.HelpUrl]
   ].filter(([, value]) => value);
 
-  if (!items.length) return '<p>No additional metadata.</p>';
+  if (!items.length) {
+    return '<p>No additional metadata.</p>';
+  }
 
-  return `<div class="metadata-grid">${items.map(([label, value]) => {
-    const safe = label === 'Documentation' ? safeUrl(value) : '';
-    const rendered = safe
-      ? `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">Open Maester documentation ↗</a>`
-      : escapeHtml(value);
+  return `
+    <div class="metadata-grid">
+      ${
+        items.map(([label, value]) => {
 
-    return `<div class="metadata-item">
-      <span class="metadata-label">${escapeHtml(label)}</span>
-      <div class="metadata-value">${rendered}</div>
-    </div>`;
-  }).join('')}</div>`;
+          const safe =
+            label === 'Documentation'
+              ? safeUrl(value)
+              : '';
+
+          const rendered =
+            safe
+              ? `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">Open Maester documentation ↗</a>`
+              : escapeHtml(value);
+
+          return `
+            <div class="metadata-item">
+              <span class="metadata-label">
+                ${escapeHtml(label)}
+              </span>
+
+              <div class="metadata-value">
+                ${rendered}
+              </div>
+            </div>
+          `;
+        }).join('')
+      }
+    </div>
+  `;
 }
 
 function compareValues(a, b, key) {
-  const av = a[key] ?? '';
-  const bv = b[key] ?? '';
+  const av =
+    a[key] ?? '';
+
+  const bv =
+    b[key] ?? '';
 
   if (key === 'Status') {
-    const order = { Failed: 1, Error: 2, Investigate: 3, Skipped: 4, NotRun: 5, Passed: 6 };
-    return (order[av] || 99) - (order[bv] || 99);
+    const order = {
+      Failed: 1,
+      Error: 2,
+      Investigate: 3,
+      Skipped: 4,
+      NotRun: 5,
+      Passed: 6
+    };
+
+    return (order[av] || 99) -
+           (order[bv] || 99);
   }
 
   if (key === 'Severity') {
-    const order = { Critical: 1, High: 2, Medium: 3, Low: 4, Info: 5, 'Not specified': 6 };
-    return (order[av] || 99) - (order[bv] || 99);
+    const order = {
+      Critical: 1,
+      High: 2,
+      Medium: 3,
+      Low: 4,
+      Info: 5,
+      'Not specified': 6
+    };
+
+    return (order[av] || 99) -
+           (order[bv] || 99);
   }
 
-  return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+  return String(av).localeCompare(
+    String(bv),
+    undefined,
+    {
+      numeric: true,
+      sensitivity: 'base'
+    }
+  );
 }
 
 function applyFilters() {
-  const query = document.getElementById('searchInput').value.trim().toLowerCase();
+  const query =
+    document
+      .getElementById('searchInput')
+      .value
+      .trim()
+      .toLowerCase();
 
-  visibleTests = report.tests.filter(test => {
-    if (filterState.statuses.size && !filterState.statuses.has(test.Status)) return false;
-    if (filterState.severities.size && !filterState.severities.has(test.Severity)) return false;
-    if (filterState.services.size && !filterState.services.has(test.Service)) return false;
+  visibleTests =
+    report.tests.filter(test => {
 
-    if (query) {
-      const haystack = [
-        test.ControlId, test.Name, test.Status, test.Severity, test.Service,
-        test.Category, test.Tags, test.Description, test.Details,
-        test.SkipReason, test.Error, test.Source, test.HelpUrl
-      ].join(' ').toLowerCase();
-      if (!haystack.includes(query)) return false;
-    }
+      if (
+        filterState.statuses.size &&
+        !filterState.statuses.has(test.Status)
+      ) {
+        return false;
+      }
 
-    return true;
-  });
+      if (
+        filterState.severities.size &&
+        !filterState.severities.has(test.Severity)
+      ) {
+        return false;
+      }
+
+      if (
+        filterState.services.size &&
+        !filterState.services.has(test.Service)
+      ) {
+        return false;
+      }
+
+      if (query) {
+        const haystack = [
+          test.ControlId,
+          test.Name,
+          test.Status,
+          test.Severity,
+          test.Service,
+          test.Category,
+          test.Tags,
+          test.Description,
+          test.Details,
+          test.SkipReason,
+          test.Error,
+          test.Source,
+          test.HelpUrl
+        ]
+        .join(' ')
+        .toLowerCase();
+
+        if (!haystack.includes(query)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
 
   visibleTests.sort((a, b) => {
-    const result = compareValues(a, b, sortState.key);
-    return sortState.direction === 'asc' ? result : -result;
+    const result =
+      compareValues(a, b, sortState.key);
+
+    return sortState.direction === 'asc'
+      ? result
+      : -result;
   });
 
   renderTable();
 }
 
 function renderTable() {
-  const body = document.getElementById('resultsBody');
+  const body =
+    document.getElementById('resultsBody');
+
   body.innerHTML = '';
 
   visibleTests.forEach(test => {
-    const dataRow = document.createElement('tr');
-    dataRow.className = 'data-row';
-    dataRow.innerHTML = `
-      <td><span class="pill ${statusClass(test.Status)}">${escapeHtml(test.Status)}</span></td>
-      <td class="name-cell">
-        <div class="test-name">${escapeHtml(test.Name)}</div>
-        <div class="test-id">${escapeHtml(test.ControlId || test.Tags || '')}</div>
-      </td>
-      <td><span class="pill">${escapeHtml(test.Service || 'Other')}</span></td>
-      <td><span class="pill ${severityClass(test.Severity)}">${escapeHtml(test.Severity)}</span></td>
-      <td>${escapeHtml(test.Duration || '—')}</td>
-      <td><button type="button" class="btn details-button">View details</button></td>`;
 
-    const detailRow = document.createElement('tr');
-    detailRow.className = 'detail-row';
+    const dataRow =
+      document.createElement('tr');
+
+    dataRow.className =
+      'data-row';
+
+    dataRow.innerHTML = `
+      <td>
+        <span class="pill ${statusClass(test.Status)}">
+          ${escapeHtml(test.Status)}
+        </span>
+      </td>
+
+      <td class="name-cell">
+        <div class="test-name">
+          ${escapeHtml(test.Name)}
+        </div>
+
+        <div class="test-id">
+          ${escapeHtml(test.ControlId || test.Tags || '')}
+        </div>
+      </td>
+
+      <td>
+        <span class="pill">
+          ${escapeHtml(test.Service || 'Other')}
+        </span>
+      </td>
+
+      <td>
+        <span class="pill ${severityClass(test.Severity)}">
+          ${escapeHtml(test.Severity)}
+        </span>
+      </td>
+
+      <td>
+        ${escapeHtml(test.Duration || '—')}
+      </td>
+
+      <td>
+        <button
+          type="button"
+          class="btn details-button"
+        >
+          View details
+        </button>
+      </td>
+    `;
+
+    const detailRow =
+      document.createElement('tr');
+
+    detailRow.className =
+      'detail-row';
+
     detailRow.innerHTML = `
       <td colspan="6">
         <div class="detail-panel">
+
           <div class="detail-block">
-            <div class="detail-heading">What is being tested</div>
+            <div class="detail-heading">
+              What is being tested
+            </div>
+
             <div class="detail-text"></div>
           </div>
+
           <div class="detail-block">
-            <div class="detail-heading">Readable test result</div>
+            <div class="detail-heading">
+              Readable test result
+            </div>
+
             <div class="detail-text"></div>
           </div>
+
           <div class="detail-block full">
-            <div class="detail-heading">Technical metadata</div>
+            <div class="detail-heading">
+              Technical metadata
+            </div>
+
             <div class="detail-text"></div>
           </div>
+
         </div>
-      </td>`;
+      </td>
+    `;
 
-    const detailElements = detailRow.querySelectorAll('.detail-text');
-    detailElements[0].innerHTML = formatDetailValue(
-      test.Description || 'No description was provided by this test.'
-    );
-    detailElements[1].innerHTML = formatDetailValue(
-      test.Details || test.SkipReason || test.Error || 'No additional result details were provided.',
-      statusClass(test.Status)
-    );
-    detailElements[2].innerHTML = formatMetadata(test);
+    const detailElements =
+      detailRow.querySelectorAll('.detail-text');
 
-    const button = dataRow.querySelector('.details-button');
+    detailElements[0].innerHTML =
+      formatDetailValue(
+        test.Description ||
+        'No description was provided by this test.'
+      );
+
+    detailElements[1].innerHTML =
+      formatDetailValue(
+        test.Details ||
+        test.SkipReason ||
+        test.Error ||
+        'No additional result details were provided.',
+        statusClass(test.Status)
+      );
+
+    detailElements[2].innerHTML =
+      formatMetadata(test);
+
+    const button =
+      dataRow.querySelector('.details-button');
+
     button.addEventListener('click', () => {
-      const open = detailRow.classList.toggle('open');
-      button.textContent = open ? 'Hide details' : 'View details';
+      const open =
+        detailRow.classList.toggle('open');
+
+      button.textContent =
+        open
+          ? 'Hide details'
+          : 'View details';
     });
 
     body.appendChild(dataRow);
     body.appendChild(detailRow);
   });
 
-  document.getElementById('visibleCount').textContent = visibleTests.length;
-  document.getElementById('emptyState').style.display = visibleTests.length ? 'none' : 'block';
-  document.getElementById('resultsTable').style.display = visibleTests.length ? 'table' : 'none';
+  document.getElementById('visibleCount').textContent =
+    visibleTests.length;
+
+  document.getElementById('emptyState').style.display =
+    visibleTests.length
+      ? 'none'
+      : 'block';
+
+  document.getElementById('resultsTable').style.display =
+    visibleTests.length
+      ? 'table'
+      : 'none';
 }
 
 function csvEscape(value) {
-  const text = String(value ?? '').replaceAll('"', '""');
+  const text =
+    String(value ?? '').replaceAll('"', '""');
+
   return `"${text}"`;
 }
 
 function exportCsv() {
-  const columns = ['ControlId','Name','Status','Severity','Service','Category','Duration','Tags','Description','Details','SkipReason','Error','Source','HelpUrl'];
-  const lines = [columns.map(csvEscape).join(',')];
+  const columns = [
+    'ControlId',
+    'Name',
+    'Status',
+    'Severity',
+    'Service',
+    'Category',
+    'Duration',
+    'Tags',
+    'Description',
+    'Details',
+    'SkipReason',
+    'Error',
+    'Source',
+    'HelpUrl'
+  ];
+
+  const lines = [
+    columns.map(csvEscape).join(',')
+  ];
+
   for (const test of visibleTests) {
-    lines.push(columns.map(column => csvEscape(test[column])).join(','));
+    lines.push(
+      columns
+        .map(column => csvEscape(test[column]))
+        .join(',')
+    );
   }
 
-  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
+  const blob =
+    new Blob(
+      ['\ufeff' + lines.join('\r\n')],
+      {
+        type:'text/csv;charset=utf-8'
+      }
+    );
+
+  const url =
+    URL.createObjectURL(blob);
+
+  const link =
+    document.createElement('a');
+
   link.href = url;
-  link.download = `Maester-Dashboard-${report.tenant.generatedAt.replaceAll(':','-').replace(' ','_')}.csv`;
+
+  link.download =
+    `Maester-Dashboard-${
+      report.tenant.generatedAt
+        .replaceAll(':','-')
+        .replace(' ','_')
+    }.csv`;
+
   document.body.appendChild(link);
+
   link.click();
   link.remove();
+
   URL.revokeObjectURL(url);
 }
 
 function toggleTheme() {
-  const root = document.documentElement;
-  const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  root.setAttribute('data-theme', next);
-  localStorage.setItem('maester-dashboard-theme', next);
-  document.getElementById('themeButton').textContent = next === 'dark' ? 'Light mode' : 'Dark mode';
+  const root =
+    document.documentElement;
+
+  const next =
+    root.getAttribute('data-theme') === 'dark'
+      ? 'light'
+      : 'dark';
+
+  root.setAttribute(
+    'data-theme',
+    next
+  );
+
+  localStorage.setItem(
+    'maester-dashboard-theme',
+    next
+  );
+
+  document.getElementById('themeButton').textContent =
+    next === 'dark'
+      ? 'Light mode'
+      : 'Dark mode';
 }
 
 function initialize() {
-  const savedTheme = localStorage.getItem('maester-dashboard-theme');
-  if (savedTheme === 'dark' || savedTheme === 'light') {
-    document.documentElement.setAttribute('data-theme', savedTheme);
-  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    document.documentElement.setAttribute('data-theme', 'dark');
+  const savedTheme =
+    localStorage.getItem(
+      'maester-dashboard-theme'
+    );
+
+  if (
+    savedTheme === 'dark' ||
+    savedTheme === 'light'
+  ) {
+    document.documentElement.setAttribute(
+      'data-theme',
+      savedTheme
+    );
+  }
+  else if (
+    window.matchMedia &&
+    window.matchMedia(
+      '(prefers-color-scheme: dark)'
+    ).matches
+  ) {
+    document.documentElement.setAttribute(
+      'data-theme',
+      'dark'
+    );
   }
 
   document.getElementById('themeButton').textContent =
-    document.documentElement.getAttribute('data-theme') === 'dark' ? 'Light mode' : 'Dark mode';
+    document.documentElement.getAttribute('data-theme') === 'dark'
+      ? 'Light mode'
+      : 'Dark mode';
 
   setSummary();
   renderCharts();
-  Object.keys(filterDefinitions).forEach(renderFilterOptions);
 
-  document.getElementById('searchInput').addEventListener('input', applyFilters);
+  Object
+    .keys(filterDefinitions)
+    .forEach(renderFilterOptions);
 
-  document.querySelector('.toolbar').addEventListener('change', event => {
-    const checkbox = event.target.closest('input[type="checkbox"][data-filter-name]');
-    if (!checkbox) return;
+  document
+    .getElementById('searchInput')
+    .addEventListener(
+      'input',
+      applyFilters
+    );
 
-    const selected = filterState[checkbox.dataset.filterName];
-    if (checkbox.checked) selected.add(checkbox.value);
-    else selected.delete(checkbox.value);
+  document
+    .querySelector('.toolbar')
+    .addEventListener('change', event => {
 
-    updateFilterSummary(checkbox.dataset.filterName);
-    applyFilters();
-  });
+      const checkbox =
+        event.target.closest(
+          'input[type="checkbox"][data-filter-name]'
+        );
 
-  document.querySelectorAll('[data-filter-trigger]').forEach(trigger => {
-    trigger.addEventListener('click', event => {
-      event.stopPropagation();
-      const filterName = trigger.dataset.filterTrigger;
-      const willOpen = trigger.getAttribute('aria-expanded') !== 'true';
-      closeFilterMenus(willOpen ? filterName : '');
-    });
-  });
-
-  document.querySelectorAll('.filter-popover').forEach(menu => {
-    menu.addEventListener('click', event => event.stopPropagation());
-  });
-
-  document.querySelectorAll('[data-clear-filter]').forEach(button => {
-    button.addEventListener('click', () => {
-      const filterName = button.dataset.clearFilter;
-      filterState[filterName].clear();
-      renderFilterOptions(filterName);
-      applyFilters();
-    });
-  });
-
-  document.addEventListener('click', () => closeFilterMenus());
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') closeFilterMenus();
-  });
-
-  document.getElementById('exportButton').addEventListener('click', exportCsv);
-  document.getElementById('themeButton').addEventListener('click', toggleTheme);
-  document.getElementById('clearButton').addEventListener('click', () => {
-    document.getElementById('searchInput').value = '';
-    Object.keys(filterState).forEach(filterName => filterState[filterName].clear());
-    Object.keys(filterDefinitions).forEach(renderFilterOptions);
-    closeFilterMenus();
-    applyFilters();
-  });
-
-  document.querySelectorAll('th[data-sort]').forEach(header => {
-    header.addEventListener('click', () => {
-      const key = header.dataset.sort;
-      if (sortState.key === key) {
-        sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
-      } else {
-        sortState.key = key;
-        sortState.direction = 'asc';
+      if (!checkbox) {
+        return;
       }
+
+      const selected =
+        filterState[
+          checkbox.dataset.filterName
+        ];
+
+      if (checkbox.checked) {
+        selected.add(checkbox.value);
+      }
+      else {
+        selected.delete(checkbox.value);
+      }
+
+      updateFilterSummary(
+        checkbox.dataset.filterName
+      );
+
       applyFilters();
     });
-  });
+
+  document
+    .querySelectorAll('[data-filter-trigger]')
+    .forEach(trigger => {
+
+      trigger.addEventListener(
+        'click',
+        event => {
+
+          event.stopPropagation();
+
+          const filterName =
+            trigger.dataset.filterTrigger;
+
+          const willOpen =
+            trigger.getAttribute(
+              'aria-expanded'
+            ) !== 'true';
+
+          closeFilterMenus(
+            willOpen
+              ? filterName
+              : ''
+          );
+        }
+      );
+    });
+
+  document
+    .querySelectorAll('.filter-popover')
+    .forEach(menu => {
+
+      menu.addEventListener(
+        'click',
+        event => event.stopPropagation()
+      );
+    });
+
+  document
+    .querySelectorAll('[data-clear-filter]')
+    .forEach(button => {
+
+      button.addEventListener(
+        'click',
+        () => {
+
+          const filterName =
+            button.dataset.clearFilter;
+
+          filterState[
+            filterName
+          ].clear();
+
+          renderFilterOptions(
+            filterName
+          );
+
+          applyFilters();
+        }
+      );
+    });
+
+  document.addEventListener(
+    'click',
+    () => closeFilterMenus()
+  );
+
+  document.addEventListener(
+    'keydown',
+    event => {
+      if (event.key === 'Escape') {
+        closeFilterMenus();
+      }
+    }
+  );
+
+  document
+    .getElementById('exportButton')
+    .addEventListener(
+      'click',
+      exportCsv
+    );
+
+  document
+    .getElementById('themeButton')
+    .addEventListener(
+      'click',
+      toggleTheme
+    );
+
+  document
+    .getElementById('clearButton')
+    .addEventListener(
+      'click',
+      () => {
+
+        document
+          .getElementById('searchInput')
+          .value = '';
+
+        Object
+          .keys(filterState)
+          .forEach(filterName =>
+            filterState[filterName].clear()
+          );
+
+        Object
+          .keys(filterDefinitions)
+          .forEach(renderFilterOptions);
+
+        closeFilterMenus();
+        applyFilters();
+      }
+    );
+
+  document
+    .querySelectorAll('th[data-sort]')
+    .forEach(header => {
+
+      header.addEventListener(
+        'click',
+        () => {
+
+          const key =
+            header.dataset.sort;
+
+          if (sortState.key === key) {
+            sortState.direction =
+              sortState.direction === 'asc'
+                ? 'desc'
+                : 'asc';
+          }
+          else {
+            sortState.key = key;
+            sortState.direction = 'asc';
+          }
+
+          applyFilters();
+        }
+      );
+    });
 
   applyFilters();
 }
 
 initialize();
 </script>
+
 </body>
 </html>
 '@
@@ -2678,11 +4247,15 @@ if ($useExistingRun) {
     Write-Step 'Using an existing completed Maester run'
     $runFolder = (Resolve-Path -Path $ExistingRunFolder -ErrorAction Stop).Path
     $maesterResults = $null
+
     Write-Host "Existing run folder: $runFolder" -ForegroundColor Green
 }
 else {
     Write-Step 'Checking the Maester module'
-    $maesterModule = Get-LatestAvailableModule -Name 'Maester'
+
+    $maesterModule =
+        Get-LatestAvailableModule -Name 'Maester'
+
     if ($null -eq $maesterModule) {
         throw @"
     The Maester module is not installed.
@@ -2700,30 +4273,63 @@ else {
 
     Write-Host "Using Maester module version $($maesterModule.Version)" -ForegroundColor Green
 
-    $resolvedTestsPath = (Resolve-Path -Path $TestsPath).Path
-    $testFiles = @(Get-ChildItem -Path $resolvedTestsPath -Filter '*.Tests.ps1' -File -Recurse -ErrorAction Stop)
+    $resolvedTestsPath =
+        (Resolve-Path -Path $TestsPath).Path
+
+    $testFiles = @(
+        Get-ChildItem `
+            -Path $resolvedTestsPath `
+            -Filter '*.Tests.ps1' `
+            -File `
+            -Recurse `
+            -ErrorAction Stop
+    )
+
     if ($testFiles.Count -eq 0) {
         throw "No *.Tests.ps1 files were found under '$resolvedTestsPath'. Run Install-MaesterTests in that folder first."
     }
 
-    $resolvedOutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
-    $runStamp = Get-Date -Format 'yyyy-MM-dd_HHmmss'
-    $runFolder = Join-Path -Path $resolvedOutputRoot -ChildPath $runStamp
-    New-Item -Path $runFolder -ItemType Directory -Force | Out-Null
+    $resolvedOutputRoot =
+        [System.IO.Path]::GetFullPath($OutputRoot)
+
+    $runStamp =
+        Get-Date -Format 'yyyy-MM-dd_HHmmss'
+
+    $runFolder =
+        Join-Path `
+            -Path $resolvedOutputRoot `
+            -ChildPath $runStamp
+
+    New-Item `
+        -Path $runFolder `
+        -ItemType Directory `
+        -Force |
+        Out-Null
 
     if (-not $SkipConnect) {
+
         if ([string]::IsNullOrWhiteSpace($TenantId)) {
-            $TenantId = Read-Host 'Enter the target Microsoft Entra tenant ID'
-        }
-        if ([string]::IsNullOrWhiteSpace($UserPrincipalName)) {
-            $UserPrincipalName = Read-Host 'Enter the exact administrator UPN to use for all new connections'
+            $TenantId =
+                Read-Host 'Enter the target Microsoft Entra tenant ID'
         }
 
-        $parsedTenantId = [guid]::Empty
-        if (-not [guid]::TryParse($TenantId, [ref]$parsedTenantId)) {
+        if ([string]::IsNullOrWhiteSpace($UserPrincipalName)) {
+            $UserPrincipalName =
+                Read-Host 'Enter the exact administrator UPN to use for all new connections'
+        }
+
+        $parsedTenantId =
+            [guid]::Empty
+
+        if (-not [guid]::TryParse(
+            $TenantId,
+            [ref]$parsedTenantId
+        )) {
             throw "TenantId '$TenantId' is not a valid GUID."
         }
-        $TenantId = $parsedTenantId.ToString()
+
+        $TenantId =
+            $parsedTenantId.ToString()
 
         if ($UserPrincipalName -notmatch '^[^@\s]+@[^@\s]+$') {
             throw "UserPrincipalName '$UserPrincipalName' is not a valid UPN."
@@ -2737,17 +4343,29 @@ else {
         }
 
         Write-Step 'Connecting to Maester data sources using conflict-safe ordering'
-        $connectionState = Connect-MaesterServicesSafely `
-            -UPN $UserPrincipalName `
-            -Tenant $TenantId `
-            -SkipAzure:$SkipAzureConnection `
-            -RequireAll:$RequireAllServices
+
+        $connectionState =
+            Connect-MaesterServicesSafely `
+                -UPN $UserPrincipalName `
+                -Tenant $TenantId `
+                -SkipAzure:$SkipAzureConnection `
+                -RequireAll:$RequireAllServices
     }
     else {
-        Import-LatestModule -Name 'Microsoft.Graph.Authentication' -Required | Out-Null
-        Import-LatestModule -Name 'Maester' -Required | Out-Null
+        Import-LatestModule `
+            -Name 'Microsoft.Graph.Authentication' `
+            -Required |
+            Out-Null
 
-        $graphContext = Get-MgContext -ErrorAction SilentlyContinue
+        Import-LatestModule `
+            -Name 'Maester' `
+            -Required |
+            Out-Null
+
+        $graphContext =
+            Get-MgContext `
+                -ErrorAction SilentlyContinue
+
         if ($null -eq $graphContext) {
             throw '-SkipConnect was specified, but this clean process has no Microsoft Graph context. Remove -SkipConnect or authenticate inside this script.'
         }
@@ -2756,6 +4374,7 @@ else {
     }
 
     Write-Step "Running $($testFiles.Count) discovered Maester test files"
+
     $invokeParameters = @{
         Path                 = $resolvedTestsPath
         OutputFolder         = $runFolder
@@ -2767,28 +4386,57 @@ else {
     }
 
     if ($IncludeLongRunning) {
-        $invokeParameters.IncludeLongRunning = $true
-    }
-    if ($IncludePreview) {
-        $invokeParameters.IncludePreview = $true
+        $invokeParameters.IncludeLongRunning =
+            $true
     }
 
-    $maesterResults = Invoke-Maester @invokeParameters
+    if ($IncludePreview) {
+        $invokeParameters.IncludePreview =
+            $true
+    }
+
+    $maesterResults =
+        Invoke-Maester @invokeParameters
 }
 
-$originalHtmlPath = Join-Path -Path $runFolder -ChildPath 'Maester-Raw.html'
-$jsonPath = Join-Path -Path $runFolder -ChildPath 'Maester-Raw.json'
-$dashboardPath = Join-Path -Path $runFolder -ChildPath 'Maester-Dashboard.html'
-$generationLogPath = Join-Path -Path $runFolder -ChildPath 'Dashboard-Generation.log'
+$originalHtmlPath =
+    Join-Path `
+        -Path $runFolder `
+        -ChildPath 'Maester-Raw.html'
 
-# Maester can finish writing its companion files shortly after Invoke-Maester
-# returns. Wait briefly instead of treating that timing difference as a failure.
-$waitDeadline = (Get-Date).AddSeconds(30)
+$jsonPath =
+    Join-Path `
+        -Path $runFolder `
+        -ChildPath 'Maester-Raw.json'
+
+$dashboardPath =
+    Join-Path `
+        -Path $runFolder `
+        -ChildPath 'Maester-Dashboard.html'
+
+$generationLogPath =
+    Join-Path `
+        -Path $runFolder `
+        -ChildPath 'Dashboard-Generation.log'
+
+$waitDeadline =
+    (Get-Date).AddSeconds(30)
+
 do {
-    $htmlReady = Test-Path -Path $originalHtmlPath -PathType Leaf
-    $jsonReady = Test-Path -Path $jsonPath -PathType Leaf
+    $htmlReady =
+        Test-Path `
+            -Path $originalHtmlPath `
+            -PathType Leaf
 
-    if ($htmlReady -and ($jsonReady -or $null -ne $maesterResults)) {
+    $jsonReady =
+        Test-Path `
+            -Path $jsonPath `
+            -PathType Leaf
+
+    if (
+        $htmlReady -and
+        ($jsonReady -or $null -ne $maesterResults)
+    ) {
         break
     }
 
@@ -2796,40 +4444,68 @@ do {
 }
 while ((Get-Date) -lt $waitDeadline)
 
-if (-not (Test-Path -Path $originalHtmlPath -PathType Leaf)) {
+if (-not (
+    Test-Path `
+        -Path $originalHtmlPath `
+        -PathType Leaf
+)) {
     throw "Maester completed without creating the expected HTML file: $originalHtmlPath"
 }
 
 try {
-    # Prefer Maester's generated JSON as the canonical post-processing source.
-    # It is detached from live Pester ErrorRecord objects and is therefore much
-    # safer to normalize than the in-memory PassThru object.
-    if (Test-Path -Path $jsonPath -PathType Leaf) {
+
+    if (
+        Test-Path `
+            -Path $jsonPath `
+            -PathType Leaf
+    ) {
         Write-Step 'Loading the structured Maester JSON report'
-        $reportData = Get-Content -Path $jsonPath -Raw -Encoding utf8 | ConvertFrom-Json -Depth 100
+
+        $reportData =
+            Get-Content `
+                -Path $jsonPath `
+                -Raw `
+                -Encoding utf8 |
+            ConvertFrom-Json -Depth 100
     }
     elseif ($null -ne $maesterResults) {
         Write-Warning 'Maester-Raw.json was not available. Using the in-memory PassThru result.'
-        $reportData = $maesterResults
+
+        $reportData =
+            $maesterResults
     }
     else {
         throw 'Invoke-Maester returned no result object and no JSON report was available.'
     }
 
     Write-Step 'Normalizing Maester test results'
-    $normalizedTests = @(New-NormalizedTestCollection -MaesterResults $reportData)
+
+    $normalizedTests = @(
+        New-NormalizedTestCollection `
+            -MaesterResults $reportData
+    )
+
     if ($normalizedTests.Count -eq 0) {
         throw 'The Maester result did not contain any test records. Review Maester-Raw.html and Maester-Raw.json for details.'
     }
 
     Write-Step 'Creating the modern standalone HTML dashboard'
+
     New-ModernDashboardHtml `
         -MaesterResults $reportData `
         -Tests $normalizedTests `
-        -OriginalHtmlFileName ([System.IO.Path]::GetFileName($originalHtmlPath)) `
+        -OriginalHtmlFileName (
+            [System.IO.Path]::GetFileName(
+                $originalHtmlPath
+            )
+        ) `
         -OutputPath $dashboardPath
 
-    if (-not (Test-Path -Path $dashboardPath -PathType Leaf)) {
+    if (-not (
+        Test-Path `
+            -Path $dashboardPath `
+            -PathType Leaf
+    )) {
         throw "Dashboard generation completed without creating the expected file: $dashboardPath"
     }
 
@@ -2838,12 +4514,18 @@ try {
         "Source JSON: $jsonPath"
         "Output HTML: $dashboardPath"
         "Normalized tests: $($normalizedTests.Count)"
-    ) | Set-Content -Path $generationLogPath -Encoding utf8
+    ) |
+    Set-Content `
+        -Path $generationLogPath `
+        -Encoding utf8
 }
 catch {
-    $failure = $_
+
+    $failure =
+        $_
+
     $diagnosticText = @(
-        'Maester dashboard post-processing failed.'
+        'ITI365 dashboard post-processing failed.'
         "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
         "Run folder: $runFolder"
         "Raw HTML: $originalHtmlPath"
@@ -2856,62 +4538,215 @@ catch {
         $failure.ScriptStackTrace
     ) -join "`r`n"
 
-    $diagnosticText | Set-Content -Path $generationLogPath -Encoding utf8
+    $diagnosticText |
+        Set-Content `
+            -Path $generationLogPath `
+            -Encoding utf8
 
-    # Create a visible fallback HTML file rather than leaving only the original
-    # report with no indication that post-processing failed.
-    $safeMessage = [System.Net.WebUtility]::HtmlEncode($failure.Exception.Message)
-    $safeRawName = [System.Net.WebUtility]::HtmlEncode([System.IO.Path]::GetFileName($originalHtmlPath))
+    $safeMessage =
+        [System.Net.WebUtility]::HtmlEncode(
+            $failure.Exception.Message
+        )
+
+    $safeRawName =
+        [System.Net.WebUtility]::HtmlEncode(
+            [System.IO.Path]::GetFileName(
+                $originalHtmlPath
+            )
+        )
+
     $fallbackHtml = @"
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Maester dashboard generation error</title>
-<style>
-body{margin:0;background:#f4f7fb;color:#0f1e33;font:14px/1.5 "Segoe UI",sans-serif}.wrap{max-width:900px;margin:70px auto;padding:0 24px}.card{background:#fff;border:1px solid #e2eaf3;border-radius:12px;padding:24px;box-shadow:0 2px 6px rgb(30 60 120 / .06)}h1{margin-top:0;font-size:22px}.error{padding:14px;border-radius:8px;background:#fde2e2;color:#991b1b;white-space:pre-wrap}.btn{display:inline-block;margin-top:16px;padding:9px 13px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none;font-weight:700}.path{margin-top:16px;color:#5e7292;font-family:Consolas,monospace;overflow-wrap:anywhere}
-</style>
-</head>
-<body><div class="wrap"><div class="card"><h1>Dashboard post-processing did not complete</h1><p>The Maester assessment itself completed and the original report is available.</p><div class="error">$safeMessage</div><a class="btn" href="$safeRawName">Open original Maester report</a><div class="path">Diagnostic log: Dashboard-Generation.log</div></div></div></body></html>
-"@
-    $fallbackHtml | Set-Content -Path $dashboardPath -Encoding utf8
 
-    Write-Error "The original Maester report was generated, but the modern dashboard post-processing failed. Diagnostic log: $generationLogPath. $($failure.Exception.Message)"
+<title>ITI365 dashboard generation error</title>
+
+<style>
+body{
+    margin:0;
+    background:#f4f7fb;
+    color:#0f1e33;
+    font:14px/1.5 "Segoe UI",sans-serif
 }
 
-$passedCount = @($normalizedTests | Where-Object Status -eq 'Passed').Count
-$failedCount = @($normalizedTests | Where-Object Status -eq 'Failed').Count
-$investigateCount = @($normalizedTests | Where-Object Status -eq 'Investigate').Count
-$skippedCount = @($normalizedTests | Where-Object { $_.Status -in @('Skipped', 'NotRun') }).Count
-$errorCount = @($normalizedTests | Where-Object Status -eq 'Error').Count
+.wrap{
+    max-width:900px;
+    margin:70px auto;
+    padding:0 24px
+}
+
+.card{
+    background:#fff;
+    border:1px solid #e2eaf3;
+    border-radius:12px;
+    padding:24px;
+    box-shadow:0 2px 6px rgb(30 60 120 / .06)
+}
+
+h1{
+    margin-top:0;
+    font-size:22px
+}
+
+.error{
+    padding:14px;
+    border-radius:8px;
+    background:#fde2e2;
+    color:#991b1b;
+    white-space:pre-wrap
+}
+
+.btn{
+    display:inline-block;
+    margin-top:16px;
+    padding:9px 13px;
+    border-radius:8px;
+    background:#2563eb;
+    color:#fff;
+    text-decoration:none;
+    font-weight:700
+}
+
+.path{
+    margin-top:16px;
+    color:#5e7292;
+    font-family:Consolas,monospace;
+    overflow-wrap:anywhere
+}
+</style>
+
+</head>
+
+<body>
+
+<div class="wrap">
+    <div class="card">
+
+        <h1>
+            Dashboard post-processing did not complete
+        </h1>
+
+        <p>
+            The ITI365 assessment itself completed and the original report is available.
+        </p>
+
+        <div class="error">
+            $safeMessage
+        </div>
+
+        <a
+            class="btn"
+            href="$safeRawName"
+        >
+            Open original report
+        </a>
+
+        <div class="path">
+            Diagnostic log: Dashboard-Generation.log
+        </div>
+
+    </div>
+</div>
+
+</body>
+</html>
+"@
+
+    $fallbackHtml |
+        Set-Content `
+            -Path $dashboardPath `
+            -Encoding utf8
+
+    Write-Error "The original ITI365 report was generated, but the modern dashboard post-processing failed. Diagnostic log: $generationLogPath. $($failure.Exception.Message)"
+}
+
+$passedCount = @(
+    $normalizedTests |
+        Where-Object Status -eq 'Passed'
+).Count
+
+$failedCount = @(
+    $normalizedTests |
+        Where-Object Status -eq 'Failed'
+).Count
+
+$investigateCount = @(
+    $normalizedTests |
+        Where-Object Status -eq 'Investigate'
+).Count
+
+$skippedCount = @(
+    $normalizedTests |
+        Where-Object {
+            $_.Status -in @(
+                'Skipped',
+                'NotRun'
+            )
+        }
+).Count
+
+$errorCount = @(
+    $normalizedTests |
+        Where-Object Status -eq 'Error'
+).Count
 
 Write-Host ''
-Write-Host 'Dashboard successfully generated.' -ForegroundColor Green
+
+Write-Host `
+    'Dashboard successfully generated.' `
+    -ForegroundColor Green
+
 Write-Host "  Total       : $($normalizedTests.Count)"
-Write-Host "  Passed      : $passedCount" -ForegroundColor Green
-Write-Host "  Failed      : $failedCount" -ForegroundColor Red
-Write-Host "  Investigate : $investigateCount" -ForegroundColor Magenta
-Write-Host "  Skipped     : $skippedCount" -ForegroundColor Yellow
-Write-Host "  Errors      : $errorCount" -ForegroundColor Red
+
+Write-Host `
+    "  Passed      : $passedCount" `
+    -ForegroundColor Green
+
+Write-Host `
+    "  Failed      : $failedCount" `
+    -ForegroundColor Red
+
+Write-Host `
+    "  Investigate : $investigateCount" `
+    -ForegroundColor Magenta
+
+Write-Host `
+    "  Skipped     : $skippedCount" `
+    -ForegroundColor Yellow
+
+Write-Host `
+    "  Errors      : $errorCount" `
+    -ForegroundColor Red
+
 Write-Host ''
-Write-Host "Modern dashboard : $dashboardPath" -ForegroundColor Cyan
-Write-Host "Original report  : $originalHtmlPath"
-Write-Host "Structured JSON  : $jsonPath"
+
+Write-Host `
+    "Modern dashboard : $dashboardPath" `
+    -ForegroundColor Cyan
+
+Write-Host `
+    "Original report  : $originalHtmlPath"
+
+Write-Host `
+    "Structured JSON  : $jsonPath"
 
 if ($OpenReport) {
-    Invoke-Item -Path $dashboardPath
+    Invoke-Item `
+        -Path $dashboardPath
 }
 
 [pscustomobject]@{
-    RunFolder         = $runFolder
-    DashboardHtml     = $dashboardPath
-    OriginalHtml      = $originalHtmlPath
-    JsonReport        = $jsonPath
-    Total             = $normalizedTests.Count
-    Passed            = $passedCount
-    Failed            = $failedCount
-    Investigate       = $investigateCount
-    SkippedOrNotRun   = $skippedCount
-    Errors            = $errorCount
+    RunFolder       = $runFolder
+    DashboardHtml   = $dashboardPath
+    OriginalHtml    = $originalHtmlPath
+    JsonReport      = $jsonPath
+    Total           = $normalizedTests.Count
+    Passed          = $passedCount
+    Failed          = $failedCount
+    Investigate     = $investigateCount
+    SkippedOrNotRun = $skippedCount
+    Errors          = $errorCount
 }
